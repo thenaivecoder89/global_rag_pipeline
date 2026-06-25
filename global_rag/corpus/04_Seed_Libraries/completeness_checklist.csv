@@ -1,0 +1,13 @@
+section_id,section_name,required_evidence,pass_condition,partial_condition,missing_condition
+1,Investment Rationale,Clear investment thesis and strategic rationale,Rationale clearly stated and supported by facts,Rationale mentioned but not evidenced,No investment rationale found
+2,Strategic Fit,"Technology, geography and portfolio alignment",Fit evidenced against stated strategy,Fit asserted but not evidenced,No strategic fit discussion
+3,Financial Returns,"IRR, NPV, payback, EV/EBITDA, leverage and DSCR",Key return and valuation metrics disclosed,Some metrics disclosed but incomplete,No core financial metrics disclosed
+4,Revenue Assumptions,"PPA tariff, merchant exposure, generation, capacity factor, inflation and FX assumptions",Assumptions disclosed and supported,Assumptions partially disclosed,No revenue assumption support
+5,Risk Assessment,"Construction, offtaker, regulatory, FX, curtailment, technology and legal risks",Risks and mitigants clearly stated,Risks stated with limited mitigants,No adequate risk section
+6,Sensitivities,"Downside case, price curve, capex, opex, FX and delay sensitivities",Multiple relevant sensitivities included,Limited sensitivities included,No sensitivity analysis
+7,Valuation Benchmark,"Comparable multiples, EV/MW, EV/EBITDA and transaction benchmarks",Benchmark basis provided,Benchmark mentioned but unclear,No benchmark evidence
+8,Governance and Deal Structure,"Ownership stake, voting/control rights, minority protections and exit rights",Deal structure clearly explained,Structure partially explained,No deal structure detail
+9,Counterparty and Offtaker Review,"Offtaker, EPC contractor, O&M provider, seller and guarantor credit quality",Counterparty risk assessed with evidence,Counterparty mentioned but weak assessment,No counterparty assessment
+10,Development / Construction Readiness,"Permits, land, grid, EPC, COD, contingency and schedule readiness",Readiness evidenced with status and dependencies,Readiness partially evidenced,Readiness not addressed
+11,ESG / Environmental and Social,"E&S risks, permits, land/social impact and mitigation plans",E&S risks and mitigants documented,Partial E&S discussion,No E&S review
+12,Previous IC Requests / Follow-ups,Evidence that prior IC or reviewer comments have been addressed,All prior asks clearly addressed,Some prior asks addressed,No evidence prior asks addressed

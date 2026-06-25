@@ -1,2 +1,2 @@
-# global_rag_pipeline
-A universal RAG pipeline created to enable bots with specialization on multiple subjects
+# financial_forensic_tool
+Tool to conduct detailed financial forensic analysis as per ACFE standards

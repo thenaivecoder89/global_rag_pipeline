@@ -1,0 +1,161 @@
+countryiso3code,date,value,unit,obs_status,decimal,indicator.id,indicator.value,country.id,country.value
+ARE,2025,,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2024,3.99180705485398,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2023,4.30118228020602,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2022,7.51448425801082,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2021,4.55278571242283,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2020,-8.69342617885171,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2019,1.27134240761141,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2018,1.53716683173516,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2017,-1.06137661464977,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2016,5.65793329224303,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2015,7.08767348587587,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2014,4.63288144983127,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2013,4.91847806719888,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2012,4.6832657020049,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2011,6.73646786920814,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+ARE,2010,1.60285004671343,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AE,United Arab Emirates
+AUS,2025,,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2024,1.37340773365975,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2023,3.58382100798981,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2022,4.25304559238732,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2021,2.00694844335034,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2020,-0.133531904304775,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2019,2.19401703622717,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2018,2.87417039499501,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2017,2.29331030192918,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2016,2.75564065529868,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2015,2.16434780647852,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2014,2.60118978187332,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2013,2.65445302592404,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2012,3.95247138119184,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2011,2.39473494330615,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+AUS,2010,2.21004795300735,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),AU,Australia
+EGY,2025,,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2024,2.3991692678251,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2023,3.76028052279247,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2022,6.58784560886967,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2021,3.29064601202211,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2020,3.55016483786838,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2019,5.55209307156956,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2018,5.3311086189448,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2017,4.18122099994778,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2016,4.34664345555447,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2015,4.37201907790141,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2014,2.91591187985748,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2013,2.18546605362143,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2012,2.22619979863525,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2011,1.7645719489982,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+EGY,2010,5.1472348575531,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),EG,"Egypt, Arab Rep."
+IND,2025,,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2024,6.49476552383821,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2023,9.19075493028345,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2022,7.60936497768895,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2021,9.68959249192875,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2020,-5.77772470686801,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2019,3.87143694070356,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2018,6.45385134497769,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2017,6.79538341897911,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2016,8.25630550179086,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2015,7.99625378571471,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2014,7.41022760508854,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2013,6.38610640094825,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2012,5.45638755166587,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2011,5.24131619937695,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+IND,2010,8.49758470221235,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),IN,India
+JOR,2025,,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2024,2.48889409603647,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2023,2.88408339281683,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2022,2.64743514912058,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2021,3.65564358999147,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2020,-1.10275188309046,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2019,1.75124077866225,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2018,1.91907091341564,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2017,2.47359815449045,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2016,1.9941808493012,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2015,2.49652879315188,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2014,3.38407809933472,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2013,2.60994737548631,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2012,2.42935800100238,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2011,2.73717988632104,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+JOR,2010,2.31483422063046,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),JO,Jordan
+KHM,2025,,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2024,5.97510939607335,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2023,5.00733043811898,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2022,5.12990110773977,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2021,3.08984284148661,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2020,-3.55572193406549,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2019,7.93695013588524,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2018,8.77622376224463,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2017,8.07503915535979,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2016,7.90550116130704,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2015,7.20703472529512,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2014,8.00032074618566,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2013,7.8574997554252,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2012,7.65025657870362,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2011,7.28665813879552,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+KHM,2010,5.07691843229247,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),KH,Cambodia
+SAU,2025,,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2024,1.99650173436159,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2023,0.542592439393161,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2022,12.0005874752929,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2021,6.51959698325419,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2020,-3.80478901996312,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2019,1.65158925617395,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2018,3.2269508901591,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2017,1.18210705878283,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2016,1.70404739202878,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2015,4.65512316652699,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2014,4.02467158380668,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2013,2.94563789152025,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2012,5.76157382270968,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2011,11.758820686671,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+SAU,2010,5.0395150823517,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),SA,Saudi Arabia
+THA,2025,,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2024,2.54182067735289,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2023,2.01775095328327,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2022,2.58037874709827,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2021,1.55216608426647,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2020,-6.05003846851622,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2019,2.11455779628278,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2018,4.22287028746071,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2017,4.1776810321001,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2016,3.43515771692182,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2015,3.13404724911635,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2014,0.984468863619426,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2013,2.68749556320556,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2012,7.24279620249642,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2011,0.840132083053334,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+THA,2010,7.51339053261624,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),TH,Thailand
+UZB,2025,,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2024,6.49999999997677,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2023,6.29141635082311,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2022,6.00134232203442,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2021,8.03468312640049,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2020,1.56334277260515,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2019,6.77992399655236,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2018,5.55919572919288,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2017,4.39527463349263,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2016,5.93215079993293,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2015,7.21877350820803,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2014,6.8738384408164,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2013,7.29655036969899,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2012,7.10244488706317,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2011,7.52513989422977,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+UZB,2010,7.5971679610016,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),UZ,Uzbekistan
+ZAF,2025,,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2024,0.534843531905139,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2023,0.80610455095804,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2022,2.05813661692193,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2021,4.85864865060148,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2020,-6.1689177146757,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2019,0.25993557687633,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2018,1.55678384721676,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2017,1.15794695181735,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2016,0.664552307858116,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2015,1.32186223678229,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2014,1.41382645223793,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2013,2.48546800826588,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2012,2.39623238465745,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2011,3.16855627858818,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa
+ZAF,2010,3.03973288127956,,,1,NY.GDP.MKTP.KD.ZG,GDP growth (annual %),ZA,South Africa

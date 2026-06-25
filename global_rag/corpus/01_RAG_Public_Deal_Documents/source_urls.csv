@@ -1,0 +1,6 @@
+source_id,source_name,source_url,target_filename,notes
+SEC_001,NextEra Energy SEC submissions,https://data.sec.gov/submissions/CIK0000753308.json,NextEra_Energy_submissions.json,
+SEC_002,AES Corporation SEC submissions,https://data.sec.gov/submissions/CIK0000874761.json,AES_Corporation_submissions.json,
+SEC_003,First Solar SEC submissions,https://data.sec.gov/submissions/CIK0001274494.json,First_Solar_submissions.json,
+SEC_004,Ormat Technologies SEC submissions,https://data.sec.gov/submissions/CIK0001296445.json,Ormat_Technologies_submissions.json,
+SEC_005,Enphase Energy SEC submissions,https://data.sec.gov/submissions/CIK0001463101.json,Enphase_Energy_submissions.json,

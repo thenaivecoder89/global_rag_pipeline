@@ -1,0 +1,3 @@
+source_id,source_name,source_url,target_filename,notes
+NREL_001,NREL ATB 2024 v3 Model Parameters,CSV,2024_v3_Model_Parameters.csv,
+NREL_002,NREL ATB 2024 v3 Workbook,Excel workbook,2024_v3_Workbook_Corrected_04_02_2025.xlsx,Source page shows corrected workbook; direct file endpoint may use shorter filename

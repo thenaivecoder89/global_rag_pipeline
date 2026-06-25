@@ -1,0 +1,29 @@
+asset_class,risk_category,risk_prompt
+Solar PV,Generation Risk,Is irradiation data independently validated and based on bankable measurement sources?
+Solar PV,Curtailment Risk,Has curtailment risk been quantified and stress-tested?
+Solar PV,Degradation Risk,Are panel degradation assumptions benchmarked and warranty-backed?
+Solar PV,Module Supply Risk,"Are module supply, tariff, forced-labour and import restrictions addressed?"
+Solar PV,Grid Risk,Is grid connection secured and is grid evacuation capacity sufficient?
+Onshore Wind,Resource Risk,Is wind resource assessment based on sufficient historical measurement?
+Onshore Wind,Turbine Availability,Are turbine availability assumptions supported by OEM track record?
+Onshore Wind,Wake Loss,Are wake losses and turbine-layout assumptions independently validated?
+Onshore Wind,Permitting,"Are land, environmental and aviation permits secured?"
+Offshore Wind,Construction Risk,Is offshore construction risk reflected in contingency and delay assumptions?
+Offshore Wind,Vessel Availability,"Are vessel availability, installation windows and weather downtime considered?"
+Offshore Wind,Grid and Cable Risk,Are offshore substation and export cable risks adequately addressed?
+BESS,Revenue Stack Risk,"Are revenue streams contracted, regulated or merchant-exposed?"
+BESS,Degradation Risk,Are degradation and augmentation assumptions clearly modelled?
+BESS,Technology Safety Risk,"Are thermal runaway, fire safety and warranty provisions addressed?"
+BESS,Market Rule Risk,Could market-rule changes affect arbitrage or ancillary service revenue?
+Hydrogen,Offtake Risk,Is there a credible long-term offtake arrangement?
+Hydrogen,Technology Risk,Is electrolyzer technology proven at comparable scale?
+Hydrogen,Power Supply Risk,Is renewable power supply secured and cost-competitive?
+Hydrogen,Transport / Storage,"Are storage, compression, transport and safety requirements addressed?"
+Platform,Portfolio Concentration,"Is exposure concentrated by country, technology, offtaker or counterparty?"
+Platform,Governance,"Are platform governance, reserved matters and reporting rights adequate?"
+Platform,Integration Risk,Are different technologies and geographies managed through clear operating model?
+All Assets,FX Risk,"Are revenue, capex, debt and distributions exposed to currency mismatch?"
+All Assets,Inflation Risk,Are tariff escalation and cost inflation assumptions internally consistent?
+All Assets,Counterparty Credit,Is the credit profile of key counterparties adequately assessed?
+All Assets,Legal / Regulatory,"Are permits, concessions, tariffs and change-in-law protections adequate?"
+All Assets,Downside Case,Are downside cases linked to realistic risk drivers rather than arbitrary haircut assumptions?

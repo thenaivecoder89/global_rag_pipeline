@@ -1,0 +1,5 @@
+﻿Transaction_ID,Document_ID,Document_Name,Document_Type,Version,Document_Date,Synthetic_Flag,Purpose
+TXN_HELIOS_001,HEL-DOC-001,Synthetic_Project_Helios_IC_Deck.pptx,IC Deck,v1.0,2026-06-15,Yes,Primary submission summary
+TXN_HELIOS_001,HEL-DOC-002,Synthetic_Project_Helios_Investment_Memorandum.docx,Investment Memorandum,v1.0,2026-06-15,Yes,Detailed investment review
+TXN_HELIOS_001,HEL-DOC-003,Synthetic_Project_Helios_Financial_Assumptions.xlsx,Financial Model / Assumptions,v1.0,2026-06-15,Yes,Financial metrics and cost assumptions
+TXN_HELIOS_001,HEL-DOC-004,Synthetic_Project_Helios_Market_and_Benchmark_Note.docx,Supporting Market Report,v1.0,2026-06-15,Yes,Benchmark and market support
