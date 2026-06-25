@@ -1,0 +1,18 @@
+"table_catalog","table_schema","table_name","table_type","self_referencing_column_name","reference_generation","user_defined_type_catalog","user_defined_type_schema","user_defined_type_name","is_insertable_into","is_typed","commit_action"
+"railway","public","chunks","BASE TABLE",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","documents","BASE TABLE",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","evidence_register","BASE TABLE",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","exceptions","BASE TABLE",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","extracted_table_rows","BASE TABLE",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","extracted_tables","BASE TABLE",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","extracted_text","BASE TABLE",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","financial_records","BASE TABLE",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","findings_register","BASE TABLE",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","ingest_runs","BASE TABLE",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","llm_call_log","BASE TABLE",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","report_sections","BASE TABLE",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","sanctions_entities","BASE TABLE",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","screening_results","BASE TABLE",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","v_document_ingestion_status","VIEW",NULL,NULL,NULL,NULL,NULL,"NO","NO",NULL
+"railway","public","v_findings_summary","VIEW",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
+"railway","public","v_open_exceptions","VIEW",NULL,NULL,NULL,NULL,NULL,"YES","NO",NULL
