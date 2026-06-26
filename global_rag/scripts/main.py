@@ -16,9 +16,13 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+@app.get("/", status_code=200)
+def health_check():
+    return {"status": "ok", "message": "FastAPI service is running"}
+
 @app.get(path="/build_document_inventory", status_code=200)
 def build_doc_inv(payload: str):
-    build_document_inventory_output = build_document_inventory(payload)
+    build_document_inventory_output = build_document_inventory.build_document_inventory(payload)
     api_response = JSONResponse(
         {
             "status": "ok",
