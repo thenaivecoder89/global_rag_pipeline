@@ -15,7 +15,7 @@ import hashlib
 from datetime import datetime
 
 # Import paths and settings from the config file
-import config
+from global_rag.scripts import config
 
 def build_document_inventory(project_root: str | Path):
     bd_project_root = Path(project_root)
