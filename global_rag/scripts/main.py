@@ -3,6 +3,7 @@ import global_rag.scripts.config as cnfg
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
+from pathlib import Path
 
 app = FastAPI()
 
@@ -30,3 +31,13 @@ def build_doc_inv(payload: str):
         }
     )
     return api_response
+
+@app.get("/debug_paths")
+def debug_paths():
+    base = Path("/app")
+
+    return {
+        "app_exists": base.exists(),
+        "app_children": [str(p) for p in base.iterdir()] if base.exists() else [],
+        "cwd": str(Path.cwd()),
+    }
