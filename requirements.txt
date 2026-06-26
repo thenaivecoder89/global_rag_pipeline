@@ -1,3 +1,8 @@
-python
-psycopg
+fastapi
+uvicorn[standard]
+psycopg[binary]
 openai
+pandas
+sqlalchemy
+openpyxl
+python-dotenv
