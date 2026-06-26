@@ -16,7 +16,7 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-@app.get("/", status_code=200)
+@app.get("/health", status_code=200)
 def health_check():
     return {"status": "ok", "message": "FastAPI service is running"}
 
