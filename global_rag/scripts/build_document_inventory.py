@@ -177,7 +177,7 @@ def build_document_inventory():
                     "corpus_pack": corpus_pack,
                     "file_name": file_path.name,
                     "file_extension": file_ext,
-                    "relative_path": str(file_path.relative_to(file_path.relative_to(config_settings["project_root"]))),
+                    "relative_path": str(file_path.relative_to(config_settings["project_root"])),
                     "absolute_path": str(file_path),
                     "file_size_bytes": file_size,
                     "last_modified_datetime": last_modified_datetime,

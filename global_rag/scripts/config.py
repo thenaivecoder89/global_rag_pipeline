@@ -158,6 +158,7 @@ def config_paths():
 
     # Function return
     return_pack = {
+        "project_root": project_root,
         "corpus_dir": corpus_dir,
         "client_data_dir": client_data_dir,
         "output_dir": output_dir,
