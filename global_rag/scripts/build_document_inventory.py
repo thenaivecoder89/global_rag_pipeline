@@ -9,7 +9,6 @@
 # - embedding
 # - evidence traceability
 
-from pathlib import Path
 import pandas as pd
 import hashlib
 from datetime import datetime
@@ -17,9 +16,8 @@ from datetime import datetime
 # Import paths and settings from the config file
 from global_rag.scripts import config
 
-def build_document_inventory(project_root: str | Path):
-    bd_project_root = Path(project_root)
-    config_settings = config.config_paths(project_root=bd_project_root)
+def build_document_inventory():
+    config_settings = config.config_paths()
     
     # Define where the inventory file will be saved
     document_path = config.config_base()["document_inv"]

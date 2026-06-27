@@ -74,9 +74,9 @@ def config_base():
 
     
 
-def config_paths(project_root:str | Path):
+def config_paths():
     # Project paths
-    project_root = Path(project_root)
+    project_root = Path(__file__).resolve().parent.parent
     corpus_dir =  project_root / "corpus"
     client_data_dir = project_root / "client_data"
     output_dir = project_root / "output"
