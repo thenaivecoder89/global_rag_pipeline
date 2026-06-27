@@ -12,15 +12,20 @@
 import pandas as pd
 import hashlib
 from datetime import datetime
+from sqlalchemy import create_engine
 
 # Import paths and settings from the config file
 from global_rag.scripts import config
 
 def build_document_inventory():
     config_settings = config.config_paths()
+    config_base = config.config_base()
     
-    # Define where the inventory file will be saved
-    document_path = config.config_base()["document_inv"]
+    # Establish DB connection
+    engine = create_engine(
+        url=config_base["db_url"],
+        pool_pre_ping=True
+    )
 
     # Define which root files to scan
     # We only scan corpus and client_data
@@ -122,7 +127,7 @@ def build_document_inventory():
                 extraction_method_hint = "extract_ppt_text"
             elif file_ext in [".xlsx", ".xls"]:
                 extraction_method_hint = "extract_excel_tables"
-            elif file_ext in ".csv":
+            elif file_ext == ".csv":
                 extraction_method_hint = "read_csv_table"
             elif file_ext in [".txt", ".md"]:
                 extraction_method_hint = "read_text_file"
@@ -190,15 +195,39 @@ def build_document_inventory():
                 }
             )
 
-    # Write inventory to CSV
+    # Write inventory to DB
     inventory_df = pd.DataFrame(inventory_rows)
     inventory_df = inventory_df[inventory_columns]
     inventory_df.index.name = "SNo."
-    inventory_df.to_csv(document_path)
+    columns_to_insert  = [
+        "document_id",
+        "source_group",
+        "corpus_pack",
+        "file_name",
+        "file_extension",
+        "relative_path",
+        "absolute_path",
+        "file_size_bytes",
+        "last_modified_datetime",
+        "sha256_checksum",
+        "supported_file_type",
+        "extraction_method_hint",
+        "index_in_rag",
+        "ingest_status",
+        "notes"
+    ]
+    with engine.begin() as conn:
+        inventory_df[columns_to_insert].to_sql(
+            name="build_document_inventory",
+            con=conn,
+            index=False,
+            method="multi",
+            if_exists="append"
+        )
 
     if __name__ == "__main__":
         # Print basic summary
-        print(f"Document inventory created successfully in path: {document_path}")
+        print(f"Document inventory successfully loaded.")
         print(f"Total files inventories: {len(inventory_rows)}")
         # Count files by source group
         source_group_counts = {}
@@ -236,5 +265,8 @@ def build_document_inventory():
             print("\nNo unsupported files found.")
 
     # Return confirmation values
-    out_string = f"Document inventory in file path: {document_path}"
+    out_string = f"Document inventory successfully loaded."
     return out_string
+
+print(f'Executing the build program')
+build_document_inventory()

@@ -399,6 +399,26 @@ FROM documents
 GROUP BY corpus_zone, corpus_pack, ingest_status, extraction_status
 ORDER BY corpus_zone, corpus_pack, ingest_status, extraction_status;
 
+CREATE TABLE IF NOT EXISTS build_document_inventory(
+s_no BIGSERIAL PRIMARY KEY,
+document_id TEXT,
+source_group TEXT,
+corpus_pack TEXT,
+file_name TEXT,
+file_extension TEXT,
+relative_path TEXT,
+absolute_path TEXT,
+file_size_bytes BIGINT,
+last_modified_datetime TEXT,
+sha256_checksum TEXT,
+supported_file_type TEXT,
+extraction_method_hint TEXT,
+index_in_rag TEXT,
+ingest_status TEXT,
+notes TEXT,
+created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 COMMIT;
 
 -- Sanity checks after running:
@@ -420,3 +440,4 @@ format_type(atttypid, atttypmod) AS data_type
 FROM pg_attribute
 WHERE attrelid = 'public.chunks'::regclass
 AND attname = 'embedding';
+SELECT * FROM build_document_inventory;
