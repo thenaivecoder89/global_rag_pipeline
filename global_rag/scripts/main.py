@@ -2,6 +2,8 @@ import global_rag.scripts.build_document_inventory as bdi
 import global_rag.scripts.config as cnfg
 import global_rag.scripts.extract_documents as ed
 import global_rag.scripts.chunk_documents as cd
+import global_rag.scripts.embed_chunks as emb
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
@@ -65,6 +67,19 @@ def chunk_docs():
         {
             "status": "ok",
             "output": chunk_documents_output
+        }
+    )
+
+    return api_response
+
+@app.get(path="/embed_chunks", status_code=200)
+def embed_chunks():
+    embed_documents_output = emb.embed_chunks()
+
+    api_response = JSONResponse(
+        {
+            "status": "ok",
+            "output": embed_documents_output
         }
     )
 
