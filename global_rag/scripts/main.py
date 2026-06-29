@@ -1,6 +1,7 @@
 import global_rag.scripts.build_document_inventory as bdi
 import global_rag.scripts.config as cnfg
 import global_rag.scripts.extract_documents as ed
+import global_rag.scripts.chunk_documents as cd
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
@@ -51,6 +52,19 @@ def extract_docs():
         {
             "status": "ok",
             "output": extract_documents_output
+        }
+    )
+
+    return api_response
+
+@app.get(path="/chunk_documents", status_code=200)
+def chunk_docs():
+    chunk_documents_output = cd.chunk_documents()
+
+    api_response = JSONResponse(
+        {
+            "status": "ok",
+            "output": chunk_documents_output
         }
     )
 
