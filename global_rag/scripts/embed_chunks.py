@@ -203,4 +203,4 @@ def embed_chunks():
 
 
 if __name__ == "__main__":
-    print(embed_documents())
+    print(embed_chunks())
