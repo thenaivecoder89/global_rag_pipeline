@@ -15,10 +15,12 @@
 # - Uses OpenAI text-embedding-3-small from config.py.
 # - Assumes pgvector extension is enabled and chunks.embedding is vector(1536).
 # - search_vector is NOT manually updated because it is a generated column.
+# - This version avoids upstream errors by processing small batches per API call.
 
+import time
 import pandas as pd
 from sqlalchemy import create_engine, text
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 
 from global_rag.scripts import config
 
@@ -75,6 +77,19 @@ def check_chunks_ready(engine):
         )
 
 
+def get_remaining_chunks(engine):
+    remaining_sql = """
+        SELECT COUNT(*) AS remaining_chunks
+        FROM chunks
+        WHERE chunk_text IS NOT NULL
+          AND LENGTH(TRIM(chunk_text)) > 0
+          AND embedding IS NULL;
+    """
+
+    remaining_df = pd.read_sql(text(remaining_sql), engine)
+    return int(remaining_df.loc[0, "remaining_chunks"])
+
+
 def embed_chunks():
     config_base = config.config_base()
 
@@ -95,7 +110,19 @@ def embed_chunks():
 
     check_chunks_ready(engine)
 
-    batch_size = 50
+    # Keep this small to avoid OpenAI TPM limits and Railway upstream timeout.
+    batch_size = 10
+
+    # Each API call to /embed_chunks will process only this many batches.
+    # Re-run the endpoint until remaining_chunks_without_embedding = 0.
+    max_batches_per_run = 5
+
+    # Small pause between successful batches.
+    sleep_seconds_between_batches = 4
+
+    limit_chunks = batch_size * max_batches_per_run
+
+    remaining_before = get_remaining_chunks(engine)
 
     chunks_sql = """
         SELECT
@@ -111,17 +138,22 @@ def embed_chunks():
         ORDER BY
             document_id,
             chunk_index,
-            chunk_id;
+            chunk_id
+        LIMIT :limit_chunks;
     """
 
     chunks_df = pd.read_sql(
         text(chunks_sql),
         engine,
-        params={"embedding_model": embedding_model}
+        params={
+            "embedding_model": embedding_model,
+            "limit_chunks": limit_chunks
+        }
     )
 
-    total_chunks_to_embed = len(chunks_df)
+    chunks_selected_this_run = len(chunks_df)
     chunks_embedded = 0
+    batches_processed = 0
 
     update_sql = text("""
         UPDATE chunks
@@ -131,7 +163,7 @@ def embed_chunks():
         WHERE chunk_id = :chunk_id;
     """)
 
-    for start_index in range(0, total_chunks_to_embed, batch_size):
+    for start_index in range(0, chunks_selected_this_run, batch_size):
         batch_df = chunks_df.iloc[start_index:start_index + batch_size].copy()
 
         input_texts = []
@@ -145,10 +177,28 @@ def embed_chunks():
 
             input_texts.append(chunk_text.replace("\n", " "))
 
-        response = client.embeddings.create(
-            model=embedding_model,
-            input=input_texts
-        )
+        try:
+            response = client.embeddings.create(
+                model=embedding_model,
+                input=input_texts
+            )
+
+        except RateLimitError as e:
+            remaining_after_rate_limit = get_remaining_chunks(engine)
+
+            return {
+                "message": "Embedding paused because OpenAI rate limit was reached.",
+                "status": "rate_limited",
+                "embedding_model": embedding_model,
+                "embedding_dimension": embedding_dimension,
+                "remaining_chunks_before_run": remaining_before,
+                "chunks_selected_this_run": int(chunks_selected_this_run),
+                "chunks_embedded_this_run": int(chunks_embedded),
+                "batches_processed_this_run": int(batches_processed),
+                "remaining_chunks_without_embedding": remaining_after_rate_limit,
+                "recommended_action": "Wait around 60 seconds and call /embed_chunks again.",
+                "error_message": str(e)[:1000],
+            }
 
         update_rows = []
 
@@ -174,28 +224,28 @@ def embed_chunks():
             conn.execute(update_sql, update_rows)
 
         chunks_embedded += len(update_rows)
+        batches_processed += 1
 
-    remaining_sql = """
-        SELECT COUNT(*) AS remaining_chunks
-        FROM chunks
-        WHERE chunk_text IS NOT NULL
-          AND LENGTH(TRIM(chunk_text)) > 0
-          AND embedding IS NULL;
-    """
+        if batches_processed < max_batches_per_run:
+            time.sleep(sleep_seconds_between_batches)
 
-    remaining_df = pd.read_sql(text(remaining_sql), engine)
-    remaining_chunks = int(remaining_df.loc[0, "remaining_chunks"])
+    remaining_after = get_remaining_chunks(engine)
 
     return {
-        "message": "Document embedding completed.",
+        "message": "Document embedding batch completed.",
+        "status": "ok",
         "input_table": "chunks",
         "updated_table": "chunks",
         "embedding_model": embedding_model,
         "embedding_dimension": embedding_dimension,
-        "chunks_to_embed": int(total_chunks_to_embed),
-        "chunks_embedded": int(chunks_embedded),
-        "remaining_chunks_without_embedding": remaining_chunks,
-        "next_step": "Build retrieval endpoint/query using chunks.embedding for vector search.",
+        "batch_size": batch_size,
+        "max_batches_per_run": max_batches_per_run,
+        "remaining_chunks_before_run": remaining_before,
+        "chunks_selected_this_run": int(chunks_selected_this_run),
+        "chunks_embedded_this_run": int(chunks_embedded),
+        "batches_processed_this_run": int(batches_processed),
+        "remaining_chunks_without_embedding": remaining_after,
+        "next_step": "Re-run /embed_chunks until remaining_chunks_without_embedding is 0.",
     }
 
 
