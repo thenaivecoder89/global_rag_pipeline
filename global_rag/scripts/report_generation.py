@@ -1,6 +1,5 @@
 # File_name: report_generation.py
-# Purpose:
-# Generate a SOW-driven AI first-line IC review pack for investment submissions.
+# Purpose: Generate a SOW-driven AI first-line IC review pack for investment submissions.
 
 # This is NOT a generic market research report generator.
 
@@ -10,6 +9,13 @@
 # 3. Clearly marks unavailable SOW areas as Grey / Not assessed
 # 4. Produces JSON and Markdown outputs
 # 5. Optionally writes an audit record to PostgreSQL
+
+# Key controls:
+# - No investment recommendation is made.
+# - Historical IC learning is not claimed if historical logs are unavailable.
+# - EV/EBITDA external benchmarking is not claimed unless external evidence exists.
+# - Macro / FX / GDP conclusions are not fabricated where source data is unavailable.
+# - Every finding is traceable through chunk_id / document_id / source_reference.
 
 # Assumptions:
 # - global_rag.scripts.config contains config_base() and config_paths()
@@ -33,7 +39,7 @@ import global_rag.scripts.retrieve_chunks as ret
 # Constants
 # ---------------------------------------------------------------------
 
-REPORT_GENERATION_VERSION = "report_generation_poc_v1"
+REPORT_GENERATION_VERSION = "report_generation_poc_v2"
 REPORT_TYPE = "ai_first_line_ic_review"
 CLASSIFICATION = "Confidential External"
 
@@ -83,6 +89,7 @@ def safe_float(value):
         value = value.replace(",", "")
         value = value.replace("%", "")
         value = value.replace("x", "")
+        value = value.replace("X", "")
         value = value.strip()
         return float(value)
     except Exception:
@@ -186,12 +193,18 @@ def get_source_reference(result):
 
 def find_source_chunks(results, terms, max_sources=5):
     matched_sources = []
+    seen_chunk_ids = set()
 
     for item in results:
         chunk_text = clean_text(item.get("chunk_text"))
+        chunk_id = item.get("chunk_id")
+
+        if chunk_id in seen_chunk_ids:
+            continue
 
         if has_any(chunk_text, terms):
             matched_sources.append(get_source_reference(item))
+            seen_chunk_ids.add(chunk_id)
 
         if len(matched_sources) >= max_sources:
             break
@@ -228,38 +241,74 @@ def dedupe_results(results):
     return deduped
 
 
-def classify_evidence_type(result):
-    corpus_zone = clean_text(result.get("corpus_zone"))
-    corpus_pack = clean_text(result.get("corpus_pack"))
-    document_id = clean_text(result.get("document_id"))
-    section_heading = clean_text(result.get("section_heading"))
-    source_reference = clean_text(result.get("source_reference"))
-    chunk_text = clean_text(result.get("chunk_text"))
+# ---------------------------------------------------------------------
+# Source classification
+# ---------------------------------------------------------------------
 
-    combined = normalize_text(
-        f"{corpus_zone} {corpus_pack} {document_id} {section_heading} {source_reference} {chunk_text}"
-    )
+def classify_evidence_type(result):
+    """
+    Important:
+    Source classification must not be based on generic words inside chunk_text
+    because deck / memo chunks can mention "workbook" and be misclassified.
+
+    Classification is based primarily on document_id, section_heading and
+    source_reference metadata.
+    """
+
+    corpus_zone = clean_text(result.get("corpus_zone"))
+    document_id = clean_text(result.get("document_id"))
+    section_heading = normalize_text(result.get("section_heading"))
+    source_reference = normalize_text(result.get("source_reference"))
 
     if corpus_zone == "client_data":
-        if "workbook" in combined or "financial_assumptions" in combined or "doc_000016" in combined:
+        if document_id == "DOC_000016" or "synthetic_project_helios_financial_assumptions" in source_reference:
             return "client_workbook_control"
-        if "investment committee memorandum" in combined or "doc_000014" in combined:
+
+        if document_id == "DOC_000014" or "docx_table" in source_reference or section_heading == "docx_document_text":
             return "client_memo"
-        if "slide_" in combined or "ppt" in combined or "doc_000008" in combined:
+
+        if document_id == "DOC_000008" or section_heading.startswith("slide_"):
             return "client_deck"
-        if "page_" in combined or "pdf" in combined or "doc_000001" in combined:
+
+        if document_id == "DOC_000001" or section_heading.startswith("page_"):
             return "client_pdf"
+
         return "client_evidence"
 
     if corpus_zone == "corpus_data":
-        if "benchmark" in combined or "nrel" in combined or "utility-scale" in combined:
+        combined_metadata = normalize_text(
+            f"{result.get('corpus_pack')} {result.get('document_id')} {result.get('section_heading')} {result.get('source_reference')}"
+        )
+
+        if "benchmark" in combined_metadata or "nrel" in combined_metadata or "utility-scale" in combined_metadata:
             return "external_benchmark"
-        if "seed" in combined or "risk" in combined:
+
+        if "seed" in combined_metadata or "risk" in combined_metadata:
             return "risk_taxonomy"
+
         return "public_context"
 
     return "unknown"
 
+
+def infer_source_label(result):
+    evidence_type = classify_evidence_type(result)
+
+    if evidence_type == "client_workbook_control":
+        return "workbook"
+    if evidence_type == "client_memo":
+        return "memo"
+    if evidence_type == "client_deck":
+        return "deck"
+    if evidence_type == "client_pdf":
+        return "pdf_deck"
+
+    return "unknown"
+
+
+# ---------------------------------------------------------------------
+# Evidence selection scoring
+# ---------------------------------------------------------------------
 
 def score_result_for_module(result, module_key):
     score = 0.0
@@ -584,14 +633,14 @@ def load_review_config():
             "risk_id": "R01_MERCHANT_EXPOSURE",
             "risk": "Merchant price exposure",
             "asset_class": "Solar / BESS",
-            "terms": ["merchant exposure", "merchant price exposure", "merchant price", "merchant curve"],
+            "terms": ["merchant price exposure", "merchant exposure", "merchant price", "merchant curve"],
             "reviewer_challenge": "Has merchant revenue been supported by an independent price curve and downside confidence range?",
         },
         {
             "risk_id": "R02_GRID_COST_SCHEDULE",
             "risk": "Grid cost and schedule",
             "asset_class": "Solar / BESS",
-            "terms": ["grid cost", "grid interconnection", "grid connection", "utility design"],
+            "terms": ["grid cost and schedule", "grid cost", "grid interconnection", "grid connection", "utility design"],
             "reviewer_challenge": "Is the grid interconnection scope, cost and schedule confirmed by the utility?",
         },
         {
@@ -605,14 +654,14 @@ def load_review_config():
             "risk_id": "R04_OFFTAKER_CREDIT",
             "risk": "Offtaker credit and payment security",
             "asset_class": "Renewables",
-            "terms": ["offtaker credit", "payment security", "letter of credit", "counterparty"],
+            "terms": ["offtaker credit", "offtaker", "payment security", "letter of credit", "counterparty"],
             "reviewer_challenge": "Has offtaker creditworthiness and payment security been independently verified?",
         },
         {
             "risk_id": "R05_LAND_PERMITTING",
             "risk": "Land, easements and permits",
             "asset_class": "Renewables",
-            "terms": ["land", "easement", "permit", "permitting"],
+            "terms": ["land and permits", "land", "easement", "permit", "permitting"],
             "reviewer_challenge": "Are all land rights, easements and construction permits fully closed before approval?",
         },
         {
@@ -728,7 +777,7 @@ def get_retrieval_plan(transaction_id):
                 "corpus_zone": "client_data",
                 "top_k": 20,
                 "mode": "hybrid",
-                "max_chunk_chars": 10000,
+                "max_chunk_chars": 12000,
             }
         ],
         "sensitivity_review": [
@@ -740,7 +789,7 @@ def get_retrieval_plan(transaction_id):
                 "corpus_zone": "client_data",
                 "top_k": 20,
                 "mode": "hybrid",
-                "max_chunk_chars": 10000,
+                "max_chunk_chars": 12000,
             }
         ],
         "market_offtake_revenue": [
@@ -950,7 +999,67 @@ def identify_transaction_profile(transaction_id, evidence_packets):
 
 
 # ---------------------------------------------------------------------
-# SOW module builders
+# Table row parsing utilities
+# ---------------------------------------------------------------------
+
+def extract_row_texts(chunk_text):
+    """
+    Returns row text strings without the leading 'Row n:' label.
+    Handles rows embedded in one long chunk.
+    """
+
+    chunk_text = clean_text(chunk_text)
+    pattern = r"Row\s+\d+:\s*(.*?)(?=\s+Row\s+\d+:|$)"
+    rows = re.findall(pattern, chunk_text, flags=re.IGNORECASE)
+
+    return [clean_text(row) for row in rows]
+
+
+def parse_table_row_cells(row_text):
+    """
+    Parses rows like:
+    0: Total project cost | 1: 289.0 | 2: USD mn
+    Unnamed: 0: Total project cost | Unnamed: 1: 289.0 | Unnamed: 2: USD mn
+
+    Returns:
+    [
+      {"label": "0", "value": "Total project cost"},
+      {"label": "1", "value": "289.0"}
+    ]
+    """
+
+    cells = []
+    parts = [part.strip() for part in row_text.split("|")]
+
+    for part in parts:
+        match = re.match(r"(?:Unnamed:\s*)?([^:]+):\s*(.*)$", part, flags=re.IGNORECASE)
+
+        if match:
+            label = clean_text(match.group(1))
+            value = clean_text(match.group(2))
+        else:
+            label = ""
+            value = clean_text(part)
+
+        cells.append({"label": label, "value": value})
+
+    return cells
+
+
+def cell_values_from_row(row_text):
+    cells = parse_table_row_cells(row_text)
+    return [cell["value"] for cell in cells]
+
+
+def first_number_in_text(text_value):
+    match = re.search(r"[-+]?[0-9]+(?:\.[0-9]+)?", clean_text(text_value))
+    if match:
+        return safe_float(match.group(0))
+    return None
+
+
+# ---------------------------------------------------------------------
+# Completeness and readiness
 # ---------------------------------------------------------------------
 
 def run_completeness_check(review_config, evidence_packets):
@@ -958,24 +1067,57 @@ def run_completeness_check(review_config, evidence_packets):
     evidence_results = evidence_packets.get("completeness_readiness", {}).get("selected_results", [])
     blob = get_evidence_blob(evidence_results)
 
+    external_cost_blob = evidence_packets.get("external_cost_benchmark", {}).get("evidence_blob", "")
+    external_ev_blob = evidence_packets.get("external_ev_ebitda_benchmark", {}).get("evidence_blob", "")
+
+    external_cost_available = has_any(
+        external_cost_blob,
+        ["utility-scale battery storage", "utility-scale pv", "pv-plus-battery", "overnight capital cost", "grid connection cost"],
+    )
+
+    external_ev_available = has_all(external_ev_blob, ["ev", "ebitda"]) and has_any(
+        external_ev_blob,
+        ["enterprise value", "valuation multiple", "transaction benchmark", "comparable transaction", "listed company"],
+    )
+
     rows = []
 
     for item in checklist:
         evidence_found = has_any(blob, item["evidence_terms"])
         weak_evidence = has_any(blob, item["weak_terms"])
 
-        if not evidence_found:
-            status = READINESS_MISSING
-            traffic_light = STATUS_RED
-            weakness = "Required evidence not found in retrieved submission materials."
-        elif weak_evidence:
-            status = READINESS_WEAK
-            traffic_light = STATUS_AMBER
-            weakness = "Evidence found, but weakness / open issue language is present."
+        if item["item_id"] == "C12_BENCHMARK_SUPPORT":
+            if external_cost_available and external_ev_available:
+                status = READINESS_PASS
+                traffic_light = STATUS_GREEN
+                weakness = "External cost and EV/EBITDA benchmark evidence found."
+                evidence_found = True
+            elif external_cost_available and not external_ev_available:
+                status = READINESS_WEAK
+                traffic_light = STATUS_AMBER
+                weakness = "External cost benchmark evidence is available, but external EV/EBITDA valuation multiple evidence is not available."
+                evidence_found = True
+            elif evidence_found:
+                status = READINESS_WEAK
+                traffic_light = STATUS_AMBER
+                weakness = "Only client-side benchmark assertions are evidenced; independent benchmark support is incomplete."
+            else:
+                status = READINESS_MISSING
+                traffic_light = STATUS_RED
+                weakness = "Benchmark support not found in retrieved evidence."
         else:
-            status = READINESS_PASS
-            traffic_light = STATUS_GREEN
-            weakness = "No obvious weakness language detected in retrieved evidence."
+            if not evidence_found:
+                status = READINESS_MISSING
+                traffic_light = STATUS_RED
+                weakness = "Required evidence not found in retrieved submission materials."
+            elif weak_evidence:
+                status = READINESS_WEAK
+                traffic_light = STATUS_AMBER
+                weakness = "Evidence found, but weakness / open issue language is present."
+            else:
+                status = READINESS_PASS
+                traffic_light = STATUS_GREEN
+                weakness = "No obvious weakness language detected in retrieved evidence."
 
         evidence_text = short_evidence_text(
             results=evidence_results,
@@ -988,6 +1130,10 @@ def run_completeness_check(review_config, evidence_packets):
             terms=item["evidence_terms"] + item["weak_terms"],
             max_sources=5,
         )
+
+        if item["item_id"] == "C12_BENCHMARK_SUPPORT" and external_cost_available:
+            external_sources = evidence_packets.get("external_cost_benchmark", {}).get("selected_sources", [])
+            source_chunks = source_chunks + external_sources[:3]
 
         if status == READINESS_PASS:
             recommended_action = "No immediate action identified from retrieved evidence."
@@ -1024,6 +1170,10 @@ def run_completeness_check(review_config, evidence_packets):
         "checklist": rows,
     }
 
+
+# ---------------------------------------------------------------------
+# Strategy and fit assessment
+# ---------------------------------------------------------------------
 
 def run_strategy_fit_assessment(review_config, evidence_packets):
     criteria = review_config["strategy_criteria"]
@@ -1090,6 +1240,10 @@ def run_strategy_fit_assessment(review_config, evidence_packets):
     }
 
 
+# ---------------------------------------------------------------------
+# Historical IC question coverage
+# ---------------------------------------------------------------------
+
 def run_historical_ic_question_check(review_config, evidence_packets):
     questions = review_config["common_ic_questions"]
     evidence_results = evidence_packets.get("historical_ic_questions", {}).get("selected_results", [])
@@ -1121,18 +1275,30 @@ def run_historical_ic_question_check(review_config, evidence_packets):
         if coverage_found and not weak_found:
             coverage_status = "Fully addressed"
             traffic_light = STATUS_GREEN
+            source_chunks = find_source_chunks(
+                results=current_submission_results,
+                terms=question["coverage_terms"],
+                max_sources=5,
+            )
+            negative_evidence_chunks = []
         elif coverage_found and weak_found:
             coverage_status = "Partially addressed"
             traffic_light = STATUS_AMBER
+            source_chunks = find_source_chunks(
+                results=current_submission_results,
+                terms=question["coverage_terms"] + question["weak_terms"],
+                max_sources=5,
+            )
+            negative_evidence_chunks = find_source_chunks(
+                results=current_submission_results,
+                terms=question["weak_terms"],
+                max_sources=3,
+            )
         else:
             coverage_status = "Not addressed"
             traffic_light = STATUS_RED
-
-        source_chunks = find_source_chunks(
-            results=current_submission_results,
-            terms=question["coverage_terms"] + question["weak_terms"],
-            max_sources=5,
-        )
+            source_chunks = []
+            negative_evidence_chunks = []
 
         rows.append(
             {
@@ -1142,12 +1308,14 @@ def run_historical_ic_question_check(review_config, evidence_packets):
                 "coverage_status": coverage_status,
                 "traffic_light": traffic_light,
                 "source_chunks": source_chunks,
+                "negative_evidence_chunks": negative_evidence_chunks,
             }
         )
 
     return {
         "module": "Historical IC Question Coverage",
         "traffic_light": STATUS_AMBER,
+        "summary": "Historical IC logs are not evidenced; standard IC question library is used for this POC run.",
         "historical_logs_available": historical_logs_available,
         "limitation": (
             "Historical IC Q&A logs / follow-up actions were not clearly evidenced in the current corpus. "
@@ -1159,84 +1327,251 @@ def run_historical_ic_question_check(review_config, evidence_packets):
 
 
 # ---------------------------------------------------------------------
-# Financial reconciliation
+# Financial metric extraction and reconciliation
 # ---------------------------------------------------------------------
 
-def infer_source_label(result):
-    evidence_type = classify_evidence_type(result)
+def metric_value_is_plausible(metric_key, value):
+    if value is None:
+        return False
 
-    if evidence_type == "client_workbook_control":
-        return "workbook"
-    if evidence_type == "client_memo":
-        return "memo"
-    if evidence_type == "client_deck":
-        return "deck"
-    if evidence_type == "client_pdf":
-        return "pdf_deck"
+    if metric_key == "total_project_cost_usd_mn":
+        return 50 <= value <= 2000
 
-    return "unknown"
+    if metric_key == "project_irr_pct":
+        return 3 <= value <= 50
+
+    if metric_key == "equity_irr_pct":
+        return 3 <= value <= 60
+
+    if metric_key == "npv_usd_mn":
+        return -1000 <= value <= 1000 and abs(value) >= 3
+
+    if metric_key == "minimum_dscr_x":
+        return 0.5 <= value <= 3.5
+
+    if metric_key == "ev_ebitda_x":
+        return 2.5 <= value <= 30
+
+    if metric_key == "debt_total_cost_pct":
+        return 0 <= value <= 100
+
+    if metric_key == "year_one_revenue_usd_mn":
+        return 1 <= value <= 1000
+
+    if metric_key == "ppa_price_usd_mwh":
+        return 10 <= value <= 250
+
+    if metric_key == "capacity_factor_pct":
+        return 5 <= value <= 70
+
+    return True
 
 
-def extract_value_near_metric(text_value, metric_terms):
-    text_value = clean_text(text_value)
+def get_metric_definitions():
+    return [
+        {
+            "metric_key": "total_project_cost_usd_mn",
+            "metric_name": "Total project cost",
+            "terms": ["total project cost", "project cost"],
+            "unit": "USD mn",
+            "direct_patterns": [
+                r"total project cost[^0-9]{0,40}(?:usd\s*)?([0-9]+(?:\.[0-9]+)?)",
+                r"project cost[^0-9]{0,40}(?:usd\s*)?([0-9]+(?:\.[0-9]+)?)",
+            ],
+        },
+        {
+            "metric_key": "project_irr_pct",
+            "metric_name": "Project IRR",
+            "terms": ["project irr"],
+            "unit": "%",
+            "direct_patterns": [r"project irr[^0-9]{0,40}([0-9]+(?:\.[0-9]+)?)"],
+        },
+        {
+            "metric_key": "equity_irr_pct",
+            "metric_name": "Equity IRR",
+            "terms": ["equity irr"],
+            "unit": "%",
+            "direct_patterns": [r"equity irr[^0-9]{0,40}([0-9]+(?:\.[0-9]+)?)"],
+        },
+        {
+            "metric_key": "npv_usd_mn",
+            "metric_name": "NPV",
+            "terms": ["npv"],
+            "unit": "USD mn",
+            "direct_patterns": [r"\bnpv\b[^0-9\-]{0,40}(?:usd\s*)?([-+]?[0-9]+(?:\.[0-9]+)?)"],
+        },
+        {
+            "metric_key": "minimum_dscr_x",
+            "metric_name": "Minimum DSCR",
+            "terms": ["minimum dscr", "min_dscr", "min dscr"],
+            "unit": "x",
+            "direct_patterns": [r"(?:minimum dscr|min_dscr|min dscr)[^0-9]{0,40}([0-9]+(?:\.[0-9]+)?)"],
+        },
+        {
+            "metric_key": "ev_ebitda_x",
+            "metric_name": "EV / EBITDA",
+            "terms": ["ev / ebitda", "ev ebitda", "ev/ebitda"],
+            "unit": "x",
+            "direct_patterns": [r"ev\s*/?\s*ebitda[^0-9]{0,40}([0-9]+(?:\.[0-9]+)?)"],
+        },
+        {
+            "metric_key": "debt_total_cost_pct",
+            "metric_name": "Debt / total cost",
+            "terms": ["debt / total cost", "debt total cost", "debt-to-cost"],
+            "unit": "%",
+            "direct_patterns": [r"(?:debt\s*/\s*total cost|debt total cost|debt-to-cost)[^0-9]{0,40}([0-9]+(?:\.[0-9]+)?)"],
+        },
+        {
+            "metric_key": "year_one_revenue_usd_mn",
+            "metric_name": "Year-one revenue",
+            "terms": ["year-one revenue", "year one revenue"],
+            "unit": "USD mn",
+            "direct_patterns": [r"(?:year-one revenue|year one revenue)[^0-9]{0,40}(?:usd\s*)?([0-9]+(?:\.[0-9]+)?)"],
+        },
+        {
+            "metric_key": "ppa_price_usd_mwh",
+            "metric_name": "PPA price",
+            "terms": ["ppa price", "contracted ppa price"],
+            "unit": "USD/MWh",
+            "direct_patterns": [
+                r"ppa price[^0-9]{0,40}([0-9]+(?:\.[0-9]+)?)",
+                r"usd\s*([0-9]+(?:\.[0-9]+)?)\s*/\s*mwh",
+            ],
+        },
+        {
+            "metric_key": "capacity_factor_pct",
+            "metric_name": "Capacity factor",
+            "terms": ["capacity factor", "p50 capacity factor"],
+            "unit": "%",
+            "direct_patterns": [r"capacity factor[^0-9]{0,40}([0-9]+(?:\.[0-9]+)?)"],
+        },
+    ]
 
-    for term in metric_terms:
-        pattern = rf"{re.escape(term)}[^0-9\-]{{0,80}}([0-9]+(?:\.[0-9]+)?)"
+
+def extract_metric_from_table_row(row_text, metric):
+    row_lower = normalize_text(row_text)
+
+    if not any(term in row_lower for term in metric["terms"]):
+        return None
+
+    cells = parse_table_row_cells(row_text)
+    values = [cell["value"] for cell in cells]
+
+    metric_cell_index = None
+
+    for index, value in enumerate(values):
+        if any(term in normalize_text(value) for term in metric["terms"]):
+            metric_cell_index = index
+            break
+
+    candidate_values = []
+
+    if metric_cell_index is not None:
+        for value in values[metric_cell_index + 1:]:
+            number_value = first_number_in_text(value)
+
+            if number_value is not None:
+                candidate_values.append(number_value)
+
+    # Fallback: collect all numbers after excluding metric labels.
+    if not candidate_values:
+        for index, value in enumerate(values):
+            if index == metric_cell_index:
+                continue
+
+            number_value = first_number_in_text(value)
+
+            if number_value is not None:
+                candidate_values.append(number_value)
+
+    for candidate in candidate_values:
+        if metric_value_is_plausible(metric["metric_key"], candidate):
+            return candidate
+
+    return None
+
+
+def extract_metric_from_direct_text(chunk_text, metric):
+    text_value = clean_text(chunk_text)
+
+    # Avoid direct parsing from table chunks; table chunks should be row parsed.
+    if "Row 1:" in text_value or "Row 2:" in text_value:
+        return None
+
+    for pattern in metric["direct_patterns"]:
         match = re.search(pattern, text_value, flags=re.IGNORECASE)
-        if match:
-            return safe_float(match.group(1))
 
-    row_lines = re.findall(r"Row\s+\d+:[^R]+", text_value)
-
-    for row in row_lines:
-        row_lower = row.lower()
-
-        if not any(term.lower() in row_lower for term in metric_terms):
+        if not match:
             continue
 
-        match = re.search(r"\|\s*1:\s*([0-9]+(?:\.[0-9]+)?)", row)
-        if match:
-            return safe_float(match.group(1))
+        candidate = safe_float(match.group(1))
 
-        match = re.search(r"Unnamed:\s*2:\s*([0-9]+(?:\.[0-9]+)?)", row, flags=re.IGNORECASE)
-        if match:
-            return safe_float(match.group(1))
-
-        match = re.search(r"Unnamed:\s*1:\s*([0-9]+(?:\.[0-9]+)?)", row, flags=re.IGNORECASE)
-        if match:
-            return safe_float(match.group(1))
+        if metric_value_is_plausible(metric["metric_key"], candidate):
+            return candidate
 
     return None
 
 
 def extract_financial_metrics(evidence_results):
-    metric_definitions = [
-        {"metric_key": "total_project_cost_usd_mn", "metric_name": "Total project cost", "terms": ["Total project cost", "project cost"], "unit": "USD mn"},
-        {"metric_key": "project_irr_pct", "metric_name": "Project IRR", "terms": ["Project IRR"], "unit": "%"},
-        {"metric_key": "equity_irr_pct", "metric_name": "Equity IRR", "terms": ["Equity IRR"], "unit": "%"},
-        {"metric_key": "npv_usd_mn", "metric_name": "NPV", "terms": ["NPV"], "unit": "USD mn"},
-        {"metric_key": "minimum_dscr_x", "metric_name": "Minimum DSCR", "terms": ["Minimum DSCR", "Min_DSCR"], "unit": "x"},
-        {"metric_key": "ev_ebitda_x", "metric_name": "EV / EBITDA", "terms": ["EV / EBITDA", "EV EBITDA"], "unit": "x"},
-        {"metric_key": "debt_total_cost_pct", "metric_name": "Debt / total cost", "terms": ["Debt / total cost", "debt total cost"], "unit": "%"},
-        {"metric_key": "year_one_revenue_usd_mn", "metric_name": "Year-one revenue", "terms": ["Year-one revenue", "year one revenue"], "unit": "USD mn"},
-        {"metric_key": "ppa_price_usd_mwh", "metric_name": "PPA price", "terms": ["PPA price", "Deck PPA price"], "unit": "USD/MWh"},
-        {"metric_key": "capacity_factor_pct", "metric_name": "Capacity factor", "terms": ["Capacity factor"], "unit": "%"},
-    ]
-
+    metric_definitions = get_metric_definitions()
     rows = []
+    seen = set()
 
     for result in evidence_results:
         chunk_text = clean_text(result.get("chunk_text"))
         source_label = infer_source_label(result)
 
-        for metric in metric_definitions:
-            if not has_any(chunk_text, metric["terms"]):
-                continue
+        row_texts = extract_row_texts(chunk_text)
 
-            value = extract_value_near_metric(chunk_text, metric["terms"])
+        for metric in metric_definitions:
+            # First parse table rows.
+            for row_text in row_texts:
+                value = extract_metric_from_table_row(row_text, metric)
+
+                if value is None:
+                    continue
+
+                signature = (
+                    metric["metric_key"],
+                    source_label,
+                    round(value, 6),
+                    result.get("chunk_id"),
+                )
+
+                if signature in seen:
+                    continue
+
+                seen.add(signature)
+
+                rows.append(
+                    {
+                        "metric_key": metric["metric_key"],
+                        "metric_name": metric["metric_name"],
+                        "source_label": source_label,
+                        "value": value,
+                        "unit": metric["unit"],
+                        "source_chunk": get_source_reference(result),
+                        "extraction_method": "table_row",
+                    }
+                )
+
+            # Then parse direct text where applicable.
+            value = extract_metric_from_direct_text(chunk_text, metric)
 
             if value is None:
                 continue
+
+            signature = (
+                metric["metric_key"],
+                source_label,
+                round(value, 6),
+                result.get("chunk_id"),
+            )
+
+            if signature in seen:
+                continue
+
+            seen.add(signature)
 
             rows.append(
                 {
@@ -1246,10 +1581,31 @@ def extract_financial_metrics(evidence_results):
                     "value": value,
                     "unit": metric["unit"],
                     "source_chunk": get_source_reference(result),
+                    "extraction_method": "direct_text",
                 }
             )
 
     return rows
+
+
+def unique_float_values(values, tolerance=0.0001):
+    unique_values = []
+
+    for value in values:
+        if value is None:
+            continue
+
+        already_seen = False
+
+        for existing in unique_values:
+            if abs(float(existing) - float(value)) <= tolerance:
+                already_seen = True
+                break
+
+        if not already_seen:
+            unique_values.append(value)
+
+    return unique_values
 
 
 def reconcile_financial_metrics(metric_rows):
@@ -1264,56 +1620,99 @@ def reconcile_financial_metrics(metric_rows):
                 "metric_name": row["metric_name"],
                 "unit": row["unit"],
                 "values_by_source": {},
-                "source_chunks": [],
+                "source_chunks_by_source": {},
             }
 
         source_label = row["source_label"]
         value = row["value"]
 
         if source_label not in by_metric[metric_key]["values_by_source"]:
-            by_metric[metric_key]["values_by_source"][source_label] = value
+            by_metric[metric_key]["values_by_source"][source_label] = []
 
-        by_metric[metric_key]["source_chunks"].append(row["source_chunk"])
+        if source_label not in by_metric[metric_key]["source_chunks_by_source"]:
+            by_metric[metric_key]["source_chunks_by_source"][source_label] = []
+
+        by_metric[metric_key]["values_by_source"][source_label].append(value)
+        by_metric[metric_key]["source_chunks_by_source"][source_label].append(row["source_chunk"])
 
     reconciliation_rows = []
 
     for metric_key, item in by_metric.items():
-        values = list(item["values_by_source"].values())
-        rounded_values = sorted(set([round(float(value), 4) for value in values if value is not None]))
+        cleaned_values_by_source = {}
+        source_chunks = []
 
-        if len(rounded_values) > 1:
+        for source_label, values in item["values_by_source"].items():
+            cleaned_values_by_source[source_label] = unique_float_values(values)
+
+        for source_label, chunks in item["source_chunks_by_source"].items():
+            source_chunks.extend(chunks)
+
+        all_values = []
+
+        for values in cleaned_values_by_source.values():
+            all_values.extend(values)
+
+        distinct_values = unique_float_values(all_values)
+
+        preferred_value = None
+        preferred_source = None
+
+        for source_label in ["workbook", "memo", "deck", "pdf_deck", "unknown"]:
+            source_values = cleaned_values_by_source.get(source_label, [])
+
+            if source_values:
+                preferred_value = source_values[0]
+                preferred_source = source_label
+                break
+
+        source_level_conflict = any(len(values) > 1 for values in cleaned_values_by_source.values())
+
+        if len(distinct_values) > 1:
             traffic_light = STATUS_RED
-            issue = "Inconsistent values found across sources."
-        elif len(rounded_values) == 1:
+            issue = "Inconsistent values found across retrieved sources."
+        elif source_level_conflict:
+            traffic_light = STATUS_RED
+            issue = "Multiple values found within at least one source category."
+        elif len(distinct_values) == 1:
             traffic_light = STATUS_GREEN
             issue = "No inconsistency detected across retrieved values."
         else:
             traffic_light = STATUS_GREY
             issue = "No numeric value extracted."
 
-        preferred_value = None
-
-        if "workbook" in item["values_by_source"]:
-            preferred_value = item["values_by_source"]["workbook"]
-        elif "memo" in item["values_by_source"]:
-            preferred_value = item["values_by_source"]["memo"]
-        elif "deck" in item["values_by_source"]:
-            preferred_value = item["values_by_source"]["deck"]
-        elif values:
-            preferred_value = values[0]
-
         reconciliation_rows.append(
             {
                 "metric_key": metric_key,
                 "metric_name": item["metric_name"],
                 "unit": item["unit"],
-                "values_by_source": item["values_by_source"],
+                "values_by_source": cleaned_values_by_source,
                 "preferred_value_for_review": preferred_value,
+                "preferred_source": preferred_source,
                 "traffic_light": traffic_light,
                 "issue": issue,
-                "source_chunks": item["source_chunks"],
+                "source_chunks": source_chunks,
             }
         )
+
+    metric_order = [
+        "total_project_cost_usd_mn",
+        "project_irr_pct",
+        "equity_irr_pct",
+        "npv_usd_mn",
+        "minimum_dscr_x",
+        "ev_ebitda_x",
+        "debt_total_cost_pct",
+        "year_one_revenue_usd_mn",
+        "ppa_price_usd_mwh",
+        "capacity_factor_pct",
+    ]
+
+    order_map = {metric_key: index for index, metric_key in enumerate(metric_order)}
+
+    reconciliation_rows = sorted(
+        reconciliation_rows,
+        key=lambda row: order_map.get(row["metric_key"], 999),
+    )
 
     return reconciliation_rows
 
@@ -1333,7 +1732,7 @@ def run_financial_reconciliation(evidence_packets):
     return {
         "module": "Financial Metrics and Inconsistency Review",
         "traffic_light": module_status,
-        "summary": "Financial metrics are extracted deterministically and reconciled across retrieved sources.",
+        "summary": "Financial metrics are extracted using row-aware parsing and reconciled across workbook, memo, deck and PDF evidence.",
         "metric_rows_extracted": metric_rows,
         "reconciliation_table": reconciliation_rows,
     }
@@ -1359,43 +1758,41 @@ def extract_sensitivity_cases(evidence_results):
 
     for result in evidence_results:
         chunk_text = clean_text(result.get("chunk_text"))
-        rows = re.findall(r"Row\s+\d+:[^R]+", chunk_text)
+        source_label = infer_source_label(result)
+        row_texts = extract_row_texts(chunk_text)
 
-        for row in rows:
-            if not has_any(row, scenario_terms):
+        for row_text in row_texts:
+            if not has_any(row_text, scenario_terms):
                 continue
 
             scenario = None
             for term in scenario_terms:
-                if has_any(row, [term]):
+                if has_any(row_text, [term]):
                     scenario = term
                     break
+
+            values = cell_values_from_row(row_text)
 
             equity_irr = None
             min_dscr = None
             included_in_submission = None
 
-            match = re.search(r"Unnamed:\s*6:\s*([0-9]+(?:\.[0-9]+)?)", row, flags=re.IGNORECASE)
-            if match:
-                equity_irr = safe_float(match.group(1))
+            # Workbook sensitivity table: scenario is often in cell 0,
+            # equity IRR in cell 6, min DSCR in cell 7, included flag in cell 8.
+            if len(values) >= 9:
+                equity_irr = safe_float(values[6])
+                min_dscr = safe_float(values[7])
 
-            match = re.search(r"Unnamed:\s*7:\s*([0-9]+(?:\.[0-9]+)?)", row, flags=re.IGNORECASE)
-            if match:
-                min_dscr = safe_float(match.group(1))
+                flag = clean_text(values[8])
+                if flag.lower() in ["yes", "no"]:
+                    included_in_submission = flag
 
-            match = re.search(r"Unnamed:\s*8:\s*(Yes|No)", row, flags=re.IGNORECASE)
-            if match:
-                included_in_submission = match.group(1)
+            # Memo/deck-style table: scenario, equity IRR, DSCR.
+            if equity_irr is None and len(values) >= 2:
+                equity_irr = first_number_in_text(values[1])
 
-            if equity_irr is None:
-                match = re.search(r"\|\s*1:\s*([0-9]+(?:\.[0-9]+)?)%?", row)
-                if match:
-                    equity_irr = safe_float(match.group(1))
-
-            if min_dscr is None:
-                match = re.search(r"\|\s*2:\s*([0-9]+(?:\.[0-9]+)?)x?", row)
-                if match:
-                    min_dscr = safe_float(match.group(1))
+            if min_dscr is None and len(values) >= 3:
+                min_dscr = first_number_in_text(values[2])
 
             sensitivity_cases.append(
                 {
@@ -1403,6 +1800,7 @@ def extract_sensitivity_cases(evidence_results):
                     "equity_irr_pct": equity_irr,
                     "minimum_dscr_x": min_dscr,
                     "included_in_submission": included_in_submission,
+                    "source_label": source_label,
                     "source_chunk": get_source_reference(result),
                 }
             )
@@ -1410,27 +1808,87 @@ def extract_sensitivity_cases(evidence_results):
     return sensitivity_cases
 
 
+def dedupe_sensitivity_cases(cases):
+    """
+    Deduplicate by scenario.
+    Prefer:
+    1. Cases with included_in_submission explicitly populated
+    2. Workbook cases
+    3. Cases with both equity IRR and DSCR
+    """
+
+    by_scenario = {}
+
+    for case in cases:
+        scenario = clean_text(case.get("scenario"))
+
+        if not scenario:
+            continue
+
+        quality_score = 0
+
+        if case.get("included_in_submission") in ["Yes", "No"]:
+            quality_score += 5
+
+        if case.get("source_label") == "workbook":
+            quality_score += 3
+
+        if case.get("equity_irr_pct") is not None:
+            quality_score += 1
+
+        if case.get("minimum_dscr_x") is not None:
+            quality_score += 1
+
+        if scenario not in by_scenario or quality_score > by_scenario[scenario]["quality_score"]:
+            by_scenario[scenario] = {
+                "quality_score": quality_score,
+                "case": case,
+            }
+
+    ordered_scenarios = [
+        "Base Case",
+        "Merchant price -15%",
+        "Generation -5%",
+        "Capex +10%",
+        "COD delay 6 months",
+        "FX depreciation 10%",
+        "Combined downside",
+        "BESS degradation / augmentation",
+    ]
+
+    output_cases = []
+
+    for scenario in ordered_scenarios:
+        if scenario in by_scenario:
+            output_cases.append(by_scenario[scenario]["case"])
+
+    for scenario, data in by_scenario.items():
+        if scenario not in ordered_scenarios:
+            output_cases.append(data["case"])
+
+    return output_cases
+
+
 def run_sensitivity_review(evidence_packets):
     evidence_results = evidence_packets.get("sensitivity_review", {}).get("selected_results", [])
     blob = get_evidence_blob(evidence_results)
-    sensitivity_cases = extract_sensitivity_cases(evidence_results)
+
+    raw_sensitivity_cases = extract_sensitivity_cases(evidence_results)
+    sensitivity_cases = dedupe_sensitivity_cases(raw_sensitivity_cases)
 
     combined_downside_available = has_any(blob, ["combined downside"])
     bess_augmentation_available = has_any(blob, ["bess degradation", "augmentation", "battery augmentation"])
 
-    combined_downside_not_in_submission = has_any(
-        blob,
-        [
-            "combined downside not shown",
-            "combined downside and bess augmentation sensitivities are absent",
-            "sensitivity cases: combined downside",
-            "unnamed: 8: no",
-        ],
-    )
+    submission_gap_flag = False
+
+    for case in sensitivity_cases:
+        if case.get("scenario") in ["Combined downside", "BESS degradation / augmentation"]:
+            if case.get("included_in_submission") == "No":
+                submission_gap_flag = True
 
     if not sensitivity_cases and not combined_downside_available:
         module_status = STATUS_RED
-    elif combined_downside_not_in_submission:
+    elif submission_gap_flag:
         module_status = STATUS_AMBER
     else:
         module_status = STATUS_GREEN
@@ -1438,11 +1896,13 @@ def run_sensitivity_review(evidence_packets):
     return {
         "module": "Sensitivity and Downside Protection Review",
         "traffic_light": module_status,
-        "summary": "Sensitivity review distinguishes submitted cases from workbook-only cases.",
+        "summary": "Sensitivity review distinguishes submitted cases from workbook-only cases and deduplicates duplicate deck/PDF/memo scenarios.",
         "combined_downside_available_in_evidence": combined_downside_available,
         "bess_augmentation_available_in_evidence": bess_augmentation_available,
-        "submission_gap_flag": combined_downside_not_in_submission,
+        "submission_gap_flag": submission_gap_flag,
         "sensitivity_cases": sensitivity_cases,
+        "raw_case_count_before_deduplication": len(raw_sensitivity_cases),
+        "deduped_case_count": len(sensitivity_cases),
         "source_chunks": [get_source_reference(item) for item in evidence_results[:8]],
     }
 
@@ -1457,9 +1917,9 @@ def run_market_offtake_revenue_review(evidence_packets):
 
     flags = {
         "contracted_merchant_split_evidenced": has_any(blob, ["contracted share", "70%", "merchant share", "30%"]),
-        "merchant_curve_missing": has_any(blob, ["merchant curve source not appended", "independent merchant curve referenced but not appended", "independent merchant-price study is referenced but not included"]),
-        "offtaker_credit_missing": has_any(blob, ["no independent credit", "offtaker-credit support are missing", "offtaker credit support are missing"]),
-        "payment_security_pending": has_any(blob, ["payment-security package remains under negotiation", "payment security", "under discussion", "not executed"]),
+        "merchant_curve_missing": has_any(blob, ["merchant curve source not appended", "independent merchant curve referenced but not appended", "independent merchant-price study is referenced but not included", "independent curve absent"]),
+        "offtaker_credit_missing": has_any(blob, ["no independent credit", "offtaker-credit support are missing", "offtaker credit support are missing", "independent credit review absent"]),
+        "payment_security_pending": has_any(blob, ["payment-security package remains under negotiation", "payment security", "under discussion", "under negotiation", "not executed"]),
         "ppa_price_conflict": has_any(blob, ["deck says 60", "deck ppa price", "ppa price 2029"]),
         "bess_revenue_evidenced": has_any(blob, ["bess revenue", "ancillary services", "capacity", "shifting"]),
     }
@@ -1482,7 +1942,7 @@ def run_market_offtake_revenue_review(evidence_packets):
                 "finding": "Independent merchant-price curve support is missing or not appended.",
                 "traffic_light": STATUS_RED,
                 "explanation": "The submission appears to rely on merchant revenue, but the independent curve is not available in the submission evidence.",
-                "source_chunks": find_source_chunks(evidence_results, ["merchant curve", "not appended", "not included"]),
+                "source_chunks": find_source_chunks(evidence_results, ["merchant curve", "not appended", "not included", "independent curve absent"]),
             }
         )
 
@@ -1492,7 +1952,7 @@ def run_market_offtake_revenue_review(evidence_packets):
                 "finding": "Offtaker credit and payment-security package are not fully evidenced.",
                 "traffic_light": STATUS_RED,
                 "explanation": "Payment security / credit support appears under discussion, not fully executed or independently reviewed.",
-                "source_chunks": find_source_chunks(evidence_results, ["offtaker", "credit", "payment security", "under negotiation", "under discussion"]),
+                "source_chunks": find_source_chunks(evidence_results, ["offtaker", "credit", "payment security", "under negotiation", "under discussion", "not executed"]),
             }
         )
 
@@ -1515,6 +1975,7 @@ def run_market_offtake_revenue_review(evidence_packets):
     return {
         "module": "Market, Offtake and Revenue Review",
         "traffic_light": module_status,
+        "summary": "Market/offtake review flags merchant curve, offtaker credit, payment security and PPA price consistency issues.",
         "flags": flags,
         "findings": findings,
     }
@@ -1524,50 +1985,97 @@ def run_market_offtake_revenue_review(evidence_packets):
 # Risk register
 # ---------------------------------------------------------------------
 
-def extract_rating_for_risk(blob, terms):
-    blob_lower = normalize_text(blob)
+def extract_risk_table_rows(evidence_results):
+    risk_rows = []
 
-    for term in terms:
-        term_lower = normalize_text(term)
-        position = blob_lower.find(term_lower)
+    for result in evidence_results:
+        chunk_text = clean_text(result.get("chunk_text"))
+        row_texts = extract_row_texts(chunk_text)
 
-        if position == -1:
-            continue
+        for row_text in row_texts:
+            values = cell_values_from_row(row_text)
 
-        window = blob_lower[position:position + 300]
+            if len(values) < 2:
+                continue
 
-        if "not assessed" in window:
-            return "Not assessed"
-        if "medium-high" in window:
-            return "Medium-high"
-        if "high" in window:
-            return "High"
-        if "medium" in window:
-            return "Medium"
-        if "low" in window:
-            return "Low"
+            first_cell = clean_text(values[0])
+            second_cell = clean_text(values[1])
 
-    return "Not specified"
+            if normalize_text(first_cell) in ["risk", "principal risks"]:
+                continue
+
+            # Risk table rows generally have:
+            # cell 0 = risk, cell 1 = rating/assessment, cell 2 = mitigation/status
+            if has_any(second_cell, ["high", "medium", "low", "not assessed"]):
+                mitigation_status = values[2] if len(values) >= 3 else ""
+
+                risk_rows.append(
+                    {
+                        "risk_text": first_cell,
+                        "rating": second_cell,
+                        "mitigation_status": clean_text(mitigation_status),
+                        "source_chunk": get_source_reference(result),
+                    }
+                )
+
+    return risk_rows
+
+
+def find_best_risk_row(risk_rows, terms):
+    for row in risk_rows:
+        if has_any(row.get("risk_text"), terms):
+            return row
+
+    for row in risk_rows:
+        if has_any(row.get("mitigation_status"), terms):
+            return row
+
+    return None
+
+
+def risk_rating_to_traffic_light(rating, mitigation_status):
+    rating_lower = normalize_text(rating)
+    mitigation_lower = normalize_text(mitigation_status)
+
+    if "not assessed" in rating_lower:
+        return STATUS_RED
+
+    if "not assessed" in mitigation_lower or "no dedicated" in mitigation_lower or "no funded" in mitigation_lower:
+        return STATUS_RED
+
+    if "high" in rating_lower:
+        return STATUS_AMBER
+
+    if "medium-high" in rating_lower:
+        return STATUS_AMBER
+
+    if "medium" in rating_lower:
+        return STATUS_AMBER
+
+    if "low" in rating_lower:
+        return STATUS_GREEN
+
+    return STATUS_GREY
 
 
 def run_risk_review(review_config, evidence_packets):
     risk_taxonomy = review_config["asset_class_risk_taxonomy"]
     evidence_results = evidence_packets.get("risk_review", {}).get("selected_results", [])
-    blob = get_evidence_blob(evidence_results)
+    risk_rows = extract_risk_table_rows(evidence_results)
 
     rows = []
 
     for risk_item in risk_taxonomy:
-        risk_found = has_any(blob, risk_item["terms"])
+        best_row = find_best_risk_row(risk_rows, risk_item["terms"])
 
-        if not risk_found:
+        if not best_row:
             rows.append(
                 {
                     "risk_id": risk_item["risk_id"],
                     "risk": risk_item["risk"],
                     "asset_class": risk_item["asset_class"],
                     "rating": "Not identified",
-                    "mitigation_status": "No evidence found in retrieved materials.",
+                    "mitigation_status": "No row-level evidence found in retrieved risk tables.",
                     "reviewer_challenge": risk_item["reviewer_challenge"],
                     "open_gap": "Risk topic not clearly addressed in retrieved evidence.",
                     "traffic_light": STATUS_GREY,
@@ -1576,21 +2084,9 @@ def run_risk_review(review_config, evidence_packets):
             )
             continue
 
-        rating = extract_rating_for_risk(blob, risk_item["terms"])
-        source_chunks = find_source_chunks(evidence_results, risk_item["terms"], max_sources=5)
-        risk_window_text = short_evidence_text(evidence_results, risk_item["terms"], max_chars=800)
-
-        weak = has_any(
-            risk_window_text,
-            ["not assessed", "not modelled", "not appended", "under negotiation", "absent", "open", "missing"],
-        )
-
-        if rating == "Not assessed":
-            traffic_light = STATUS_RED
-        elif rating in ["High", "Medium-high"] or weak:
-            traffic_light = STATUS_AMBER
-        else:
-            traffic_light = STATUS_GREEN
+        rating = best_row.get("rating")
+        mitigation_status = best_row.get("mitigation_status")
+        traffic_light = risk_rating_to_traffic_light(rating, mitigation_status)
 
         rows.append(
             {
@@ -1598,11 +2094,11 @@ def run_risk_review(review_config, evidence_packets):
                 "risk": risk_item["risk"],
                 "asset_class": risk_item["asset_class"],
                 "rating": rating,
-                "mitigation_status": risk_window_text,
+                "mitigation_status": mitigation_status,
                 "reviewer_challenge": risk_item["reviewer_challenge"],
                 "open_gap": "Review the mitigation/status evidence and request support where weak language is present.",
                 "traffic_light": traffic_light,
-                "source_chunks": source_chunks,
+                "source_chunks": [best_row.get("source_chunk")],
             }
         )
 
@@ -1617,7 +2113,9 @@ def run_risk_review(review_config, evidence_packets):
     return {
         "module": "Risk Register and Reviewer Challenge Prompts",
         "traffic_light": module_status,
+        "summary": "Risk register is built from row-level risk table parsing to avoid contamination across unrelated risk rows.",
         "risk_register": rows,
+        "raw_risk_rows_extracted": risk_rows,
     }
 
 
@@ -1673,6 +2171,7 @@ def run_client_valuation_review(evidence_packets):
     return {
         "module": "Client-Side Valuation Review",
         "traffic_light": STATUS_AMBER if cost_challenge_present else STATUS_GREEN,
+        "summary": "Client-side valuation review separates reported valuation metrics from independent benchmark confirmation.",
         "important_note": "Client-side benchmark statements are not treated as independent external benchmark confirmation.",
         "findings": findings,
     }
@@ -1756,6 +2255,7 @@ def run_external_benchmark_review(evidence_packets):
     return {
         "module": "External Benchmark Review",
         "traffic_light": module_status,
+        "summary": "External benchmark review allows cost benchmarking but blocks unsupported EV/EBITDA benchmark claims.",
         "cost_benchmark_available": cost_benchmark_available,
         "ev_ebitda_benchmark_available": ev_ebitda_benchmark_available,
         "findings": findings,
@@ -1813,6 +2313,7 @@ def build_open_items_register(evidence_packets):
     return {
         "module": "Conditions Precedent and Open Items",
         "traffic_light": STATUS_AMBER,
+        "summary": "Open items are categorized into approval-readiness conditions for reviewer follow-up.",
         "open_items": rows,
     }
 
@@ -2209,7 +2710,7 @@ def format_markdown_report(report):
     for row in fin.get("reconciliation_table", []):
         lines.append(
             f"| {row.get('metric_name')} | {json.dumps(row.get('values_by_source'), ensure_ascii=False)} | "
-            f"{row.get('preferred_value_for_review')} {row.get('unit')} | "
+            f"{row.get('preferred_value_for_review')} {row.get('unit')} ({row.get('preferred_source')}) | "
             f"{traffic_icon(row.get('traffic_light'))} {row.get('traffic_light')} | {row.get('issue')} |"
         )
     lines.append("")
@@ -2239,12 +2740,12 @@ def format_markdown_report(report):
     risk = report.get("risk_review", {})
     lines.append("## 9. Risk Register and Reviewer Prompts")
     lines.append("")
-    lines.append("| Risk | Rating | Reviewer challenge | Status | Sources |")
-    lines.append("|---|---|---|---|---|")
+    lines.append("| Risk | Rating | Mitigation/status | Reviewer challenge | Status | Sources |")
+    lines.append("|---|---|---|---|---|---|")
     for row in risk.get("risk_register", []):
         lines.append(
-            f"| {row.get('risk')} | {row.get('rating')} | {row.get('reviewer_challenge')} | "
-            f"{traffic_icon(row.get('traffic_light'))} {row.get('traffic_light')} | "
+            f"| {row.get('risk')} | {row.get('rating')} | {clean_text(row.get('mitigation_status'))} | "
+            f"{row.get('reviewer_challenge')} | {traffic_icon(row.get('traffic_light'))} {row.get('traffic_light')} | "
             f"{format_sources_md(row.get('source_chunks'))} |"
         )
     lines.append("")
@@ -2564,16 +3065,4 @@ if __name__ == "__main__":
         write_audit=True,
     )
 
-    print(json.dumps(
-        {
-            "message": output["message"],
-            "status": output["status"],
-            "run_id": output["run_id"],
-            "transaction_id": output["transaction_id"],
-            "overall_readiness_status": output["overall_readiness_status"],
-            "output_files": output["output_files"],
-            "audit_write_result": output["audit_write_result"],
-        },
-        indent=2,
-        ensure_ascii=False,
-    ))
+    print(json.dumps(output, indent=2, ensure_ascii=False))
