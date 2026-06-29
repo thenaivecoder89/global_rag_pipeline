@@ -3,12 +3,13 @@
 # Extract native text and table content from files listed in build_document_inventory.
 #
 # Output tables used:
-# 1. extracted_text
-# 2. extracted_tables
-# 3. extracted_table_rows
+# 1. documents
+# 2. extracted_text
+# 3. extracted_tables
+# 4. extracted_table_rows
 #
 # Notes:
-# - This is intentionally bare-bones for POC use.
+# - Bare-bones POC version.
 # - No classes.
 # - No schema creation.
 # - No OCR. Scanned PDFs will be flagged as no_text_found_possible_scanned_pdf.
@@ -60,8 +61,6 @@ def clean_dataframe(df):
         if col_name == "":
             col_name = f"column_{i}"
 
-        col_name = str(col_name)
-
         if col_name in seen_columns:
             seen_columns[col_name] += 1
             col_name = f"{col_name}_{seen_columns[col_name]}"
@@ -80,7 +79,6 @@ def clean_dataframe(df):
 
 def dataframe_to_jsonb_rows(table_id, document_id, sheet_name, df):
     output_rows = []
-
     df = clean_dataframe(df)
 
     for row_index, row in df.iterrows():
@@ -102,6 +100,92 @@ def dataframe_to_jsonb_rows(table_id, document_id, sheet_name, df):
     return output_rows
 
 
+def sync_documents_from_inventory(engine):
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO documents (
+                    document_id,
+                    corpus_zone,
+                    corpus_pack,
+                    workstream,
+                    source_folder,
+                    relative_path,
+                    file_name,
+                    file_extension,
+                    file_size_bytes,
+                    file_checksum_sha256,
+                    document_type,
+                    document_title,
+                    source_authority,
+                    confidentiality_level,
+                    is_client_confidential,
+                    index_in_rag,
+                    extraction_required,
+                    ingest_status,
+                    extraction_status,
+                    extraction_quality,
+                    error_message
+                )
+                SELECT
+                    document_id,
+                    source_group AS corpus_zone,
+                    corpus_pack,
+                    'investment_ai_poc' AS workstream,
+                    source_group AS source_folder,
+                    relative_path,
+                    file_name,
+                    file_extension,
+                    file_size_bytes,
+                    sha256_checksum AS file_checksum_sha256,
+                    file_extension AS document_type,
+                    regexp_replace(file_name, '\\.[^.]*$', '') AS document_title,
+                    corpus_pack AS source_authority,
+                    CASE
+                        WHEN source_group = 'client_data' THEN 'client_confidential'
+                        ELSE 'reference_or_synthetic'
+                    END AS confidentiality_level,
+                    CASE
+                        WHEN source_group = 'client_data' THEN TRUE
+                        ELSE FALSE
+                    END AS is_client_confidential,
+                    CASE
+                        WHEN index_in_rag = 'Yes' THEN TRUE
+                        ELSE FALSE
+                    END AS index_in_rag,
+                    CASE
+                        WHEN supported_file_type = 'Yes' THEN TRUE
+                        ELSE FALSE
+                    END AS extraction_required,
+                    ingest_status,
+                    'pending' AS extraction_status,
+                    NULL AS extraction_quality,
+                    NULL AS error_message
+                FROM build_document_inventory
+                WHERE supported_file_type = 'Yes'
+                ON CONFLICT (document_id)
+                DO UPDATE SET
+                    corpus_zone = EXCLUDED.corpus_zone,
+                    corpus_pack = EXCLUDED.corpus_pack,
+                    workstream = EXCLUDED.workstream,
+                    source_folder = EXCLUDED.source_folder,
+                    relative_path = EXCLUDED.relative_path,
+                    file_name = EXCLUDED.file_name,
+                    file_extension = EXCLUDED.file_extension,
+                    file_size_bytes = EXCLUDED.file_size_bytes,
+                    file_checksum_sha256 = EXCLUDED.file_checksum_sha256,
+                    document_type = EXCLUDED.document_type,
+                    document_title = EXCLUDED.document_title,
+                    source_authority = EXCLUDED.source_authority,
+                    confidentiality_level = EXCLUDED.confidentiality_level,
+                    is_client_confidential = EXCLUDED.is_client_confidential,
+                    index_in_rag = EXCLUDED.index_in_rag,
+                    extraction_required = EXCLUDED.extraction_required,
+                    updated_at = NOW();
+            """)
+        )
+
+
 def extract_documents():
     config_base = config.config_base()
     config_paths = config.config_paths()
@@ -110,6 +194,9 @@ def extract_documents():
         url=config_base["db_url"],
         pool_pre_ping=True
     )
+
+    # Important: extracted_text / extracted_tables depend on documents.document_id
+    sync_documents_from_inventory(engine)
 
     inventory_sql = """
         SELECT *
@@ -145,10 +232,14 @@ def extract_documents():
 
         table_counter = 1
         extraction_status = "extracted"
+        document_extraction_quality = "extracted"
+        error_message = None
 
         try:
             if not file_path.exists():
                 extraction_status = "failed"
+                document_extraction_quality = "failed_file_not_found"
+                error_message = f"File not found: {file_path}"
 
                 text_rows.append(
                     {
@@ -182,12 +273,11 @@ def extract_documents():
                             "section_heading": f"page_{page_no}",
                             "extraction_method": "pymupdf_pdf_text",
                             "extraction_quality": extraction_quality,
-                            "token_count_estimate": estimate_tokens(page_text),
+                            "token_count_estimate": estimate_tokens(cleaned_page_text),
                             "text_content": cleaned_page_text,
                         }
                     )
 
-                    # Basic PDF table extraction where PyMuPDF can detect tables
                     try:
                         detected_tables = page.find_tables()
 
@@ -237,7 +327,6 @@ def extract_documents():
                 doc = Document(str(file_path))
                 doc_text_parts = []
 
-                # Headers and footers
                 for section_no, section in enumerate(doc.sections, start=1):
                     for para in section.header.paragraphs:
                         para_text = clean_text(para.text)
@@ -249,7 +338,6 @@ def extract_documents():
                         if para_text:
                             doc_text_parts.append(f"[Footer section {section_no}] {para_text}")
 
-                # Main paragraphs
                 for para in doc.paragraphs:
                     para_text = clean_text(para.text)
 
@@ -278,7 +366,6 @@ def extract_documents():
                     }
                 )
 
-                # DOCX tables
                 for table_no, docx_table in enumerate(doc.tables, start=1):
                     table_grid = []
 
@@ -376,7 +463,6 @@ def extract_documents():
 
                                 table_counter += 1
 
-                    # Speaker notes, where available
                     try:
                         if slide.has_notes_slide:
                             notes_text = clean_text(slide.notes_slide.notes_text_frame.text)
@@ -445,7 +531,6 @@ def extract_documents():
                     }
                 )
 
-                # HTML tables
                 try:
                     html_tables = pd.read_html(str(file_path))
 
@@ -512,7 +597,6 @@ def extract_documents():
                     }
                 )
 
-                # If JSON is a list of records, also store as table rows
                 if isinstance(parsed_json, list) and len(parsed_json) > 0:
                     if all(isinstance(item, dict) for item in parsed_json):
                         df = pd.DataFrame(parsed_json)
@@ -547,7 +631,6 @@ def extract_documents():
 
                         table_counter += 1
 
-                # If JSON has embedded list-of-dict sections, store those as tables too
                 if isinstance(parsed_json, dict):
                     for json_key, json_value in parsed_json.items():
                         if isinstance(json_value, list) and len(json_value) > 0:
@@ -656,6 +739,8 @@ def extract_documents():
 
             else:
                 extraction_status = "skipped"
+                document_extraction_quality = "unsupported_extension"
+                error_message = f"Unsupported extension: {file_extension}"
 
             total_text_chars = sum(
                 len(clean_text(row["text_content"]))
@@ -664,14 +749,18 @@ def extract_documents():
 
             total_table_data_rows = len(table_data_rows)
 
-            if extraction_status != "failed":
+            if extraction_status != "failed" and extraction_status != "skipped":
                 if total_text_chars == 0 and total_table_data_rows == 0:
                     extraction_status = "extracted_no_content"
+                    document_extraction_quality = "no_extractable_content"
                 else:
                     extraction_status = "extracted"
+                    document_extraction_quality = "extracted"
 
         except Exception as e:
             extraction_status = "failed"
+            document_extraction_quality = "failed"
+            error_message = str(e)[:1000]
             documents_failed += 1
 
             text_rows = [
@@ -691,7 +780,6 @@ def extract_documents():
 
         with engine.begin() as conn:
 
-            # Delete earlier extraction rows for the same document_id
             conn.execute(
                 text("""
                     DELETE FROM extracted_table_rows
@@ -716,7 +804,6 @@ def extract_documents():
                 {"document_id": document_id}
             )
 
-            # Insert extracted text rows
             if len(text_rows) > 0:
                 conn.execute(
                     text("""
@@ -742,7 +829,6 @@ def extract_documents():
                     text_rows
                 )
 
-            # Insert extracted table headers / metadata
             if len(table_rows) > 0:
                 conn.execute(
                     text("""
@@ -776,7 +862,6 @@ def extract_documents():
                     table_rows
                 )
 
-            # Insert extracted table row-level JSONB content
             if len(table_data_rows) > 0:
                 conn.execute(
                     text("""
@@ -798,7 +883,25 @@ def extract_documents():
                     table_data_rows
                 )
 
-            # Keep inventory status simple and compatible with your existing table
+            conn.execute(
+                text("""
+                    UPDATE documents
+                    SET ingest_status = :ingest_status,
+                        extraction_status = :extraction_status,
+                        extraction_quality = :extraction_quality,
+                        error_message = :error_message,
+                        updated_at = NOW()
+                    WHERE document_id = :document_id
+                """),
+                {
+                    "document_id": document_id,
+                    "ingest_status": extraction_status,
+                    "extraction_status": extraction_status,
+                    "extraction_quality": document_extraction_quality,
+                    "error_message": error_message,
+                }
+            )
+
             conn.execute(
                 text("""
                     UPDATE build_document_inventory
