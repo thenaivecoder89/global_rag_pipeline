@@ -4,10 +4,12 @@ import global_rag.scripts.extract_documents as ed
 import global_rag.scripts.chunk_documents as cd
 import global_rag.scripts.embed_chunks as emb
 import global_rag.scripts.retrieve_chunks as ret
+import global_rag.scripts.report_generation as rg
 
 from typing import Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.encoders import jsonable_encoder
 from starlette.responses import JSONResponse
 from pathlib import Path
 
@@ -112,6 +114,29 @@ def retrieve_chunks_api(
             "status": "ok",
             "output": retrieval_output
         }
+    )
+
+    return api_response
+
+@app.get(path="/generate_ic_review_report", status_code=200)
+def generate_ic_review_report_api(
+    transaction_id: str = "TXN_HELIOS_001",
+    use_llm_summary: bool = True,
+    write_audit: bool = True
+):
+    report_generation_output = rg.generate_investment_ic_review_report(
+        transaction_id=transaction_id,
+        use_llm_summary=use_llm_summary,
+        write_audit=write_audit
+    )
+
+    api_response = JSONResponse(
+        content=jsonable_encoder(
+            {
+                "status": "ok",
+                "output": report_generation_output
+            }
+        )
     )
 
     return api_response
