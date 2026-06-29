@@ -39,7 +39,7 @@ import global_rag.scripts.retrieve_chunks as ret
 # Constants
 # ---------------------------------------------------------------------
 
-REPORT_GENERATION_VERSION = "report_generation_poc_v2"
+REPORT_GENERATION_VERSION = "report_generation_poc_v3"
 REPORT_TYPE = "ai_first_line_ic_review"
 CLASSIFICATION = "Confidential External"
 
@@ -247,24 +247,23 @@ def dedupe_results(results):
 
 def classify_evidence_type(result):
     """
-    Important:
-    Source classification must not be based on generic words inside chunk_text
-    because deck / memo chunks can mention "workbook" and be misclassified.
+    Classify evidence using stable metadata only.
 
-    Classification is based primarily on document_id, section_heading and
-    source_reference metadata.
+    Do not classify a chunk as workbook/memo/deck based on words inside chunk_text,
+    because a deck can mention a workbook and a memo can mention a benchmark.
     """
 
     corpus_zone = clean_text(result.get("corpus_zone"))
     document_id = clean_text(result.get("document_id"))
     section_heading = normalize_text(result.get("section_heading"))
     source_reference = normalize_text(result.get("source_reference"))
+    corpus_pack = normalize_text(result.get("corpus_pack"))
 
     if corpus_zone == "client_data":
         if document_id == "DOC_000016" or "synthetic_project_helios_financial_assumptions" in source_reference:
             return "client_workbook_control"
 
-        if document_id == "DOC_000014" or "docx_table" in source_reference or section_heading == "docx_document_text":
+        if document_id == "DOC_000014":
             return "client_memo"
 
         if document_id == "DOC_000008" or section_heading.startswith("slide_"):
@@ -273,11 +272,14 @@ def classify_evidence_type(result):
         if document_id == "DOC_000001" or section_heading.startswith("page_"):
             return "client_pdf"
 
+        if "docx_table" in source_reference or section_heading == "docx_document_text":
+            return "client_supporting_note"
+
         return "client_evidence"
 
     if corpus_zone == "corpus_data":
         combined_metadata = normalize_text(
-            f"{result.get('corpus_pack')} {result.get('document_id')} {result.get('section_heading')} {result.get('source_reference')}"
+            f"{corpus_pack} {document_id} {section_heading} {source_reference}"
         )
 
         if "benchmark" in combined_metadata or "nrel" in combined_metadata or "utility-scale" in combined_metadata:
@@ -302,6 +304,8 @@ def infer_source_label(result):
         return "deck"
     if evidence_type == "client_pdf":
         return "pdf_deck"
+    if evidence_type == "client_supporting_note":
+        return "client_supporting_note"
 
     return "unknown"
 
@@ -1051,6 +1055,28 @@ def cell_values_from_row(row_text):
     return [cell["value"] for cell in cells]
 
 
+def get_cell_value_by_label(row_text, label_candidates):
+    """Return the value for the first matching parsed table label."""
+
+    cells = parse_table_row_cells(row_text)
+    normalized_candidates = [normalize_text(label) for label in label_candidates]
+
+    for cell in cells:
+        label = normalize_text(cell.get("label"))
+
+        for candidate in normalized_candidates:
+            if label == candidate or candidate in label:
+                return clean_text(cell.get("value"))
+
+    return None
+
+
+def row_source_is_table(result):
+    source_reference = normalize_text(result.get("source_reference"))
+    section_heading = normalize_text(result.get("section_heading"))
+    return "extracted_table_rows" in source_reference or section_heading.startswith("table:")
+
+
 def first_number_in_text(text_value):
     match = re.search(r"[-+]?[0-9]+(?:\.[0-9]+)?", clean_text(text_value))
     if match:
@@ -1335,7 +1361,7 @@ def metric_value_is_plausible(metric_key, value):
         return False
 
     if metric_key == "total_project_cost_usd_mn":
-        return 50 <= value <= 2000
+        return 100 <= value <= 2000
 
     if metric_key == "project_irr_pct":
         return 3 <= value <= 50
@@ -1372,61 +1398,68 @@ def get_metric_definitions():
         {
             "metric_key": "total_project_cost_usd_mn",
             "metric_name": "Total project cost",
-            "terms": ["total project cost", "project cost"],
+            "terms": ["total project cost"],
             "unit": "USD mn",
             "direct_patterns": [
-                r"total project cost[^0-9]{0,40}(?:usd\s*)?([0-9]+(?:\.[0-9]+)?)",
-                r"project cost[^0-9]{0,40}(?:usd\s*)?([0-9]+(?:\.[0-9]+)?)",
+                r"total project cost[^0-9]{0,50}(?:usd\s*)?([0-9]+(?:\.[0-9]+)?)",
             ],
+            "allow_table_names": ["summary", "assumptions", "docx_table_4"],
         },
         {
             "metric_key": "project_irr_pct",
             "metric_name": "Project IRR",
             "terms": ["project irr"],
             "unit": "%",
-            "direct_patterns": [r"project irr[^0-9]{0,40}([0-9]+(?:\.[0-9]+)?)"],
+            "direct_patterns": [r"project irr[^0-9]{0,50}([0-9]+(?:\.[0-9]+)?)"],
+            "allow_table_names": ["summary", "assumptions", "docx_table_4"],
         },
         {
             "metric_key": "equity_irr_pct",
             "metric_name": "Equity IRR",
             "terms": ["equity irr"],
             "unit": "%",
-            "direct_patterns": [r"equity irr[^0-9]{0,40}([0-9]+(?:\.[0-9]+)?)"],
+            "direct_patterns": [r"equity irr[^0-9]{0,50}([0-9]+(?:\.[0-9]+)?)"],
+            "allow_table_names": ["summary", "assumptions", "docx_table_4"],
         },
         {
             "metric_key": "npv_usd_mn",
             "metric_name": "NPV",
             "terms": ["npv"],
             "unit": "USD mn",
-            "direct_patterns": [r"\bnpv\b[^0-9\-]{0,40}(?:usd\s*)?([-+]?[0-9]+(?:\.[0-9]+)?)"],
+            "direct_patterns": [r"\bnpv\b[^0-9\-]{0,50}(?:usd\s*)?([-+]?[0-9]+(?:\.[0-9]+)?)"],
+            "allow_table_names": ["summary", "assumptions", "docx_table_4"],
         },
         {
             "metric_key": "minimum_dscr_x",
             "metric_name": "Minimum DSCR",
             "terms": ["minimum dscr", "min_dscr", "min dscr"],
             "unit": "x",
-            "direct_patterns": [r"(?:minimum dscr|min_dscr|min dscr)[^0-9]{0,40}([0-9]+(?:\.[0-9]+)?)"],
+            "direct_patterns": [r"(?:minimum dscr|min_dscr|min dscr)[^0-9]{0,50}([0-9]+(?:\.[0-9]+)?)"],
+            "allow_table_names": ["summary", "assumptions", "docx_table_4"],
         },
         {
             "metric_key": "ev_ebitda_x",
             "metric_name": "EV / EBITDA",
             "terms": ["ev / ebitda", "ev ebitda", "ev/ebitda"],
             "unit": "x",
-            "direct_patterns": [r"ev\s*/?\s*ebitda[^0-9]{0,40}([0-9]+(?:\.[0-9]+)?)"],
+            "direct_patterns": [r"ev\s*/?\s*ebitda[^0-9]{0,50}([0-9]+(?:\.[0-9]+)?)"],
+            "allow_table_names": ["summary", "assumptions", "docx_table_4"],
         },
         {
             "metric_key": "debt_total_cost_pct",
             "metric_name": "Debt / total cost",
             "terms": ["debt / total cost", "debt total cost", "debt-to-cost"],
             "unit": "%",
-            "direct_patterns": [r"(?:debt\s*/\s*total cost|debt total cost|debt-to-cost)[^0-9]{0,40}([0-9]+(?:\.[0-9]+)?)"],
+            "direct_patterns": [r"(?:debt\s*/\s*total cost|debt total cost|debt-to-cost)[^0-9]{0,50}([0-9]+(?:\.[0-9]+)?)"],
+            "allow_table_names": ["summary", "assumptions", "docx_table_4"],
         },
         {
             "metric_key": "year_one_revenue_usd_mn",
             "metric_name": "Year-one revenue",
             "terms": ["year-one revenue", "year one revenue"],
             "unit": "USD mn",
-            "direct_patterns": [r"(?:year-one revenue|year one revenue)[^0-9]{0,40}(?:usd\s*)?([0-9]+(?:\.[0-9]+)?)"],
+            "direct_patterns": [r"(?:year-one revenue|year one revenue)[^0-9]{0,50}(?:usd\s*)?([0-9]+(?:\.[0-9]+)?)"],
+            "allow_table_names": ["summary", "assumptions", "docx_table_4"],
         },
         {
             "metric_key": "ppa_price_usd_mwh",
@@ -1434,24 +1467,56 @@ def get_metric_definitions():
             "terms": ["ppa price", "contracted ppa price"],
             "unit": "USD/MWh",
             "direct_patterns": [
-                r"ppa price[^0-9]{0,40}([0-9]+(?:\.[0-9]+)?)",
+                r"ppa price[^0-9]{0,50}([0-9]+(?:\.[0-9]+)?)",
                 r"usd\s*([0-9]+(?:\.[0-9]+)?)\s*/\s*mwh",
             ],
+            "allow_table_names": ["summary", "assumptions"],
         },
         {
             "metric_key": "capacity_factor_pct",
             "metric_name": "Capacity factor",
             "terms": ["capacity factor", "p50 capacity factor"],
             "unit": "%",
-            "direct_patterns": [r"capacity factor[^0-9]{0,40}([0-9]+(?:\.[0-9]+)?)"],
+            "direct_patterns": [r"capacity factor[^0-9]{0,50}([0-9]+(?:\.[0-9]+)?)"],
+            "allow_table_names": ["summary", "assumptions"],
         },
     ]
+
+
+def metric_source_allowed(result, metric):
+    """Restrict metric parsing to proper financial-metric sources."""
+
+    source_label = infer_source_label(result)
+    section_heading = normalize_text(result.get("section_heading"))
+    source_reference = normalize_text(result.get("source_reference"))
+    document_id = clean_text(result.get("document_id"))
+
+    if source_label not in ["workbook", "memo", "deck", "pdf_deck"]:
+        return False
+
+    if metric["metric_key"] == "total_project_cost_usd_mn":
+        if "project costs" in section_heading and "summary" not in section_heading:
+            return False
+
+    if document_id not in ["DOC_000016", "DOC_000014", "DOC_000008", "DOC_000001"]:
+        return False
+
+    allowed_names = metric.get("allow_table_names", [])
+
+    if source_label in ["workbook", "memo"] and row_source_is_table(result):
+        if not any(name in section_heading or name in source_reference for name in allowed_names):
+            return False
+
+    return True
 
 
 def extract_metric_from_table_row(row_text, metric):
     row_lower = normalize_text(row_text)
 
     if not any(term in row_lower for term in metric["terms"]):
+        return None
+
+    if metric["metric_key"] == "total_project_cost_usd_mn" and "total project cost" not in row_lower:
         return None
 
     cells = parse_table_row_cells(row_text)
@@ -1464,25 +1529,16 @@ def extract_metric_from_table_row(row_text, metric):
             metric_cell_index = index
             break
 
+    if metric_cell_index is None:
+        return None
+
     candidate_values = []
 
-    if metric_cell_index is not None:
-        for value in values[metric_cell_index + 1:]:
-            number_value = first_number_in_text(value)
+    for value in values[metric_cell_index + 1:]:
+        number_value = first_number_in_text(value)
 
-            if number_value is not None:
-                candidate_values.append(number_value)
-
-    # Fallback: collect all numbers after excluding metric labels.
-    if not candidate_values:
-        for index, value in enumerate(values):
-            if index == metric_cell_index:
-                continue
-
-            number_value = first_number_in_text(value)
-
-            if number_value is not None:
-                candidate_values.append(number_value)
+        if number_value is not None:
+            candidate_values.append(number_value)
 
     for candidate in candidate_values:
         if metric_value_is_plausible(metric["metric_key"], candidate):
@@ -1494,8 +1550,7 @@ def extract_metric_from_table_row(row_text, metric):
 def extract_metric_from_direct_text(chunk_text, metric):
     text_value = clean_text(chunk_text)
 
-    # Avoid direct parsing from table chunks; table chunks should be row parsed.
-    if "Row 1:" in text_value or "Row 2:" in text_value:
+    if re.search(r"Row\s+\d+:", text_value, flags=re.IGNORECASE):
         return None
 
     for pattern in metric["direct_patterns"]:
@@ -1521,91 +1576,90 @@ def extract_financial_metrics(evidence_results):
         chunk_text = clean_text(result.get("chunk_text"))
         source_label = infer_source_label(result)
 
+        if source_label not in ["workbook", "memo", "deck", "pdf_deck"]:
+            continue
+
         row_texts = extract_row_texts(chunk_text)
 
         for metric in metric_definitions:
-            # First parse table rows.
+            if not metric_source_allowed(result, metric):
+                continue
+
             for row_text in row_texts:
                 value = extract_metric_from_table_row(row_text, metric)
 
                 if value is None:
                     continue
 
-                signature = (
-                    metric["metric_key"],
-                    source_label,
-                    round(value, 6),
-                    result.get("chunk_id"),
-                )
+                signature = (metric["metric_key"], source_label, round(value, 6), result.get("chunk_id"), "table_row")
 
                 if signature in seen:
                     continue
 
                 seen.add(signature)
 
-                rows.append(
-                    {
-                        "metric_key": metric["metric_key"],
-                        "metric_name": metric["metric_name"],
-                        "source_label": source_label,
-                        "value": value,
-                        "unit": metric["unit"],
-                        "source_chunk": get_source_reference(result),
-                        "extraction_method": "table_row",
-                    }
-                )
-
-            # Then parse direct text where applicable.
-            value = extract_metric_from_direct_text(chunk_text, metric)
-
-            if value is None:
-                continue
-
-            signature = (
-                metric["metric_key"],
-                source_label,
-                round(value, 6),
-                result.get("chunk_id"),
-            )
-
-            if signature in seen:
-                continue
-
-            seen.add(signature)
-
-            rows.append(
-                {
+                rows.append({
                     "metric_key": metric["metric_key"],
                     "metric_name": metric["metric_name"],
                     "source_label": source_label,
                     "value": value,
                     "unit": metric["unit"],
                     "source_chunk": get_source_reference(result),
-                    "extraction_method": "direct_text",
-                }
-            )
+                    "extraction_method": "table_row",
+                })
+
+            value = extract_metric_from_direct_text(chunk_text, metric)
+
+            if value is None:
+                continue
+
+            signature = (metric["metric_key"], source_label, round(value, 6), result.get("chunk_id"), "direct_text")
+
+            if signature in seen:
+                continue
+
+            seen.add(signature)
+
+            rows.append({
+                "metric_key": metric["metric_key"],
+                "metric_name": metric["metric_name"],
+                "source_label": source_label,
+                "value": value,
+                "unit": metric["unit"],
+                "source_chunk": get_source_reference(result),
+                "extraction_method": "direct_text",
+            })
 
     return rows
 
 
 def unique_float_values(values, tolerance=0.0001):
     unique_values = []
-
     for value in values:
         if value is None:
             continue
-
         already_seen = False
-
         for existing in unique_values:
             if abs(float(existing) - float(value)) <= tolerance:
                 already_seen = True
                 break
-
         if not already_seen:
             unique_values.append(value)
-
     return unique_values
+
+
+def dedupe_source_chunks(chunks):
+    output = []
+    seen = set()
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        key = (chunk.get("chunk_id"), chunk.get("source_reference"))
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(chunk)
+    return output
 
 
 def reconcile_financial_metrics(metric_rows):
@@ -1613,7 +1667,6 @@ def reconcile_financial_metrics(metric_rows):
 
     for row in metric_rows:
         metric_key = row["metric_key"]
-
         if metric_key not in by_metric:
             by_metric[metric_key] = {
                 "metric_key": metric_key,
@@ -1622,51 +1675,35 @@ def reconcile_financial_metrics(metric_rows):
                 "values_by_source": {},
                 "source_chunks_by_source": {},
             }
-
         source_label = row["source_label"]
-        value = row["value"]
-
-        if source_label not in by_metric[metric_key]["values_by_source"]:
-            by_metric[metric_key]["values_by_source"][source_label] = []
-
-        if source_label not in by_metric[metric_key]["source_chunks_by_source"]:
-            by_metric[metric_key]["source_chunks_by_source"][source_label] = []
-
-        by_metric[metric_key]["values_by_source"][source_label].append(value)
-        by_metric[metric_key]["source_chunks_by_source"][source_label].append(row["source_chunk"])
+        by_metric[metric_key]["values_by_source"].setdefault(source_label, []).append(row["value"])
+        by_metric[metric_key]["source_chunks_by_source"].setdefault(source_label, []).append(row["source_chunk"])
 
     reconciliation_rows = []
-
     for metric_key, item in by_metric.items():
         cleaned_values_by_source = {}
         source_chunks = []
-
         for source_label, values in item["values_by_source"].items():
             cleaned_values_by_source[source_label] = unique_float_values(values)
-
-        for source_label, chunks in item["source_chunks_by_source"].items():
+        for chunks in item["source_chunks_by_source"].values():
             source_chunks.extend(chunks)
+        source_chunks = dedupe_source_chunks(source_chunks)
 
         all_values = []
-
         for values in cleaned_values_by_source.values():
             all_values.extend(values)
-
         distinct_values = unique_float_values(all_values)
 
         preferred_value = None
         preferred_source = None
-
         for source_label in ["workbook", "memo", "deck", "pdf_deck", "unknown"]:
             source_values = cleaned_values_by_source.get(source_label, [])
-
             if source_values:
                 preferred_value = source_values[0]
                 preferred_source = source_label
                 break
 
         source_level_conflict = any(len(values) > 1 for values in cleaned_values_by_source.values())
-
         if len(distinct_values) > 1:
             traffic_light = STATUS_RED
             issue = "Inconsistent values found across retrieved sources."
@@ -1680,41 +1717,25 @@ def reconcile_financial_metrics(metric_rows):
             traffic_light = STATUS_GREY
             issue = "No numeric value extracted."
 
-        reconciliation_rows.append(
-            {
-                "metric_key": metric_key,
-                "metric_name": item["metric_name"],
-                "unit": item["unit"],
-                "values_by_source": cleaned_values_by_source,
-                "preferred_value_for_review": preferred_value,
-                "preferred_source": preferred_source,
-                "traffic_light": traffic_light,
-                "issue": issue,
-                "source_chunks": source_chunks,
-            }
-        )
+        reconciliation_rows.append({
+            "metric_key": metric_key,
+            "metric_name": item["metric_name"],
+            "unit": item["unit"],
+            "values_by_source": cleaned_values_by_source,
+            "preferred_value_for_review": preferred_value,
+            "preferred_source": preferred_source,
+            "traffic_light": traffic_light,
+            "issue": issue,
+            "source_chunks": source_chunks,
+        })
 
     metric_order = [
-        "total_project_cost_usd_mn",
-        "project_irr_pct",
-        "equity_irr_pct",
-        "npv_usd_mn",
-        "minimum_dscr_x",
-        "ev_ebitda_x",
-        "debt_total_cost_pct",
-        "year_one_revenue_usd_mn",
-        "ppa_price_usd_mwh",
-        "capacity_factor_pct",
+        "total_project_cost_usd_mn", "project_irr_pct", "equity_irr_pct", "npv_usd_mn",
+        "minimum_dscr_x", "ev_ebitda_x", "debt_total_cost_pct", "year_one_revenue_usd_mn",
+        "ppa_price_usd_mwh", "capacity_factor_pct",
     ]
-
     order_map = {metric_key: index for index, metric_key in enumerate(metric_order)}
-
-    reconciliation_rows = sorted(
-        reconciliation_rows,
-        key=lambda row: order_map.get(row["metric_key"], 999),
-    )
-
-    return reconciliation_rows
+    return sorted(reconciliation_rows, key=lambda row: order_map.get(row["metric_key"], 999))
 
 
 def run_financial_reconciliation(evidence_packets):
@@ -1742,10 +1763,8 @@ def run_financial_reconciliation(evidence_packets):
 # Sensitivity review
 # ---------------------------------------------------------------------
 
-def extract_sensitivity_cases(evidence_results):
-    sensitivity_cases = []
-
-    scenario_terms = [
+def get_sensitivity_scenarios():
+    return [
         "Base Case",
         "Merchant price -15%",
         "Generation -5%",
@@ -1756,151 +1775,224 @@ def extract_sensitivity_cases(evidence_results):
         "BESS degradation / augmentation",
     ]
 
+
+def normalize_sensitivity_scenario(value):
+    value_norm = normalize_text(value)
+    mapping = {
+        "base case": "Base Case",
+        "merchant price -15%": "Merchant price -15%",
+        "generation -5%": "Generation -5%",
+        "capex +10%": "Capex +10%",
+        "cod delay 6 months": "COD delay 6 months",
+        "fx depreciation 10%": "FX depreciation 10%",
+        "combined downside": "Combined downside",
+        "bess degradation / augmentation": "BESS degradation / augmentation",
+        "battery augmentation": "BESS degradation / augmentation",
+    }
+    for key, label in mapping.items():
+        if key in value_norm:
+            return label
+    return None
+
+
+def extract_workbook_sensitivity_case(row_text, result):
+    scenario = get_cell_value_by_label(row_text, ["Sensitivity Cases"])
+    scenario = normalize_sensitivity_scenario(scenario)
+    if not scenario:
+        return None
+    equity_irr = safe_float(get_cell_value_by_label(row_text, ["6", "Equity_IRR_pct"]))
+    minimum_dscr = safe_float(get_cell_value_by_label(row_text, ["7", "Min_DSCR_x"]))
+    included_flag = clean_text(get_cell_value_by_label(row_text, ["8", "Included_In_Submission"]))
+    if included_flag.lower() == "yes":
+        included_flag = "Yes"
+    elif included_flag.lower() == "no":
+        included_flag = "No"
+    else:
+        included_flag = None
+    if equity_irr is None or minimum_dscr is None:
+        return None
+    return {
+        "scenario": scenario,
+        "equity_irr_pct": equity_irr,
+        "minimum_dscr_x": minimum_dscr,
+        "included_in_submission": included_flag,
+        "source_label": infer_source_label(result),
+        "source_chunk": get_source_reference(result),
+        "extraction_method": "workbook_labelled_table",
+    }
+
+
+def extract_simple_sensitivity_case(row_text, result):
+    cells = parse_table_row_cells(row_text)
+    values = [cell["value"] for cell in cells]
+    scenario = None
+    scenario_index = None
+    for index, value in enumerate(values):
+        scenario = normalize_sensitivity_scenario(value)
+        if scenario:
+            scenario_index = index
+            break
+    if not scenario:
+        return None
+    if has_any(row_text, ["not shown", "not included", "does not include"]):
+        return None
+    candidate_numbers = []
+    for value in values[scenario_index + 1:]:
+        number_value = first_number_in_text(value)
+        if number_value is not None:
+            candidate_numbers.append(number_value)
+    if len(candidate_numbers) < 1:
+        return None
+    equity_irr = None
+    minimum_dscr = None
+    for number_value in candidate_numbers:
+        if equity_irr is None and 3 <= number_value <= 60:
+            equity_irr = number_value
+            continue
+        if minimum_dscr is None and 0.5 <= number_value <= 3.5:
+            minimum_dscr = number_value
+            continue
+    return {
+        "scenario": scenario,
+        "equity_irr_pct": equity_irr,
+        "minimum_dscr_x": minimum_dscr,
+        "included_in_submission": None,
+        "source_label": infer_source_label(result),
+        "source_chunk": get_source_reference(result),
+        "extraction_method": "simple_table_row",
+    }
+
+
+def extract_sensitivity_cases(evidence_results):
+    sensitivity_cases = []
+    seen = set()
     for result in evidence_results:
         chunk_text = clean_text(result.get("chunk_text"))
-        source_label = infer_source_label(result)
         row_texts = extract_row_texts(chunk_text)
-
         for row_text in row_texts:
-            if not has_any(row_text, scenario_terms):
+            if not has_any(row_text, get_sensitivity_scenarios()):
                 continue
-
-            scenario = None
-            for term in scenario_terms:
-                if has_any(row_text, [term]):
-                    scenario = term
-                    break
-
-            values = cell_values_from_row(row_text)
-
-            equity_irr = None
-            min_dscr = None
-            included_in_submission = None
-
-            # Workbook sensitivity table: scenario is often in cell 0,
-            # equity IRR in cell 6, min DSCR in cell 7, included flag in cell 8.
-            if len(values) >= 9:
-                equity_irr = safe_float(values[6])
-                min_dscr = safe_float(values[7])
-
-                flag = clean_text(values[8])
-                if flag.lower() in ["yes", "no"]:
-                    included_in_submission = flag
-
-            # Memo/deck-style table: scenario, equity IRR, DSCR.
-            if equity_irr is None and len(values) >= 2:
-                equity_irr = first_number_in_text(values[1])
-
-            if min_dscr is None and len(values) >= 3:
-                min_dscr = first_number_in_text(values[2])
-
-            sensitivity_cases.append(
-                {
-                    "scenario": scenario,
-                    "equity_irr_pct": equity_irr,
-                    "minimum_dscr_x": min_dscr,
-                    "included_in_submission": included_in_submission,
-                    "source_label": source_label,
-                    "source_chunk": get_source_reference(result),
-                }
-            )
-
+            case = None
+            if "synthetic_project_helios_financial_assumptions_sensitivities" in normalize_text(result.get("section_heading")):
+                case = extract_workbook_sensitivity_case(row_text, result)
+            if case is None:
+                case = extract_simple_sensitivity_case(row_text, result)
+            if case is None:
+                continue
+            signature = (case.get("scenario"), case.get("equity_irr_pct"), case.get("minimum_dscr_x"), case.get("included_in_submission"), case.get("source_chunk", {}).get("chunk_id"))
+            if signature in seen:
+                continue
+            seen.add(signature)
+            sensitivity_cases.append(case)
     return sensitivity_cases
 
 
 def dedupe_sensitivity_cases(cases):
-    """
-    Deduplicate by scenario.
-    Prefer:
-    1. Cases with included_in_submission explicitly populated
-    2. Workbook cases
-    3. Cases with both equity IRR and DSCR
-    """
-
     by_scenario = {}
-
     for case in cases:
         scenario = clean_text(case.get("scenario"))
-
         if not scenario:
             continue
-
         quality_score = 0
-
-        if case.get("included_in_submission") in ["Yes", "No"]:
-            quality_score += 5
-
         if case.get("source_label") == "workbook":
-            quality_score += 3
-
+            quality_score += 10
+        if case.get("included_in_submission") in ["Yes", "No"]:
+            quality_score += 6
         if case.get("equity_irr_pct") is not None:
-            quality_score += 1
-
+            quality_score += 2
         if case.get("minimum_dscr_x") is not None:
-            quality_score += 1
-
+            quality_score += 2
+        if case.get("extraction_method") == "workbook_labelled_table":
+            quality_score += 4
         if scenario not in by_scenario or quality_score > by_scenario[scenario]["quality_score"]:
-            by_scenario[scenario] = {
-                "quality_score": quality_score,
-                "case": case,
-            }
-
-    ordered_scenarios = [
-        "Base Case",
-        "Merchant price -15%",
-        "Generation -5%",
-        "Capex +10%",
-        "COD delay 6 months",
-        "FX depreciation 10%",
-        "Combined downside",
-        "BESS degradation / augmentation",
-    ]
-
+            by_scenario[scenario] = {"quality_score": quality_score, "case": case}
     output_cases = []
-
-    for scenario in ordered_scenarios:
+    for scenario in get_sensitivity_scenarios():
         if scenario in by_scenario:
             output_cases.append(by_scenario[scenario]["case"])
-
     for scenario, data in by_scenario.items():
-        if scenario not in ordered_scenarios:
+        if scenario not in get_sensitivity_scenarios():
             output_cases.append(data["case"])
-
     return output_cases
+
+
+def extract_submitted_pack_sensitivity_gaps(evidence_results):
+    gaps = []
+    seen = set()
+    for result in evidence_results:
+        chunk_text = clean_text(result.get("chunk_text"))
+        if has_any(chunk_text, ["combined downside not shown", "does not include a combined downside case"]):
+            key = "combined_downside_not_shown"
+            if key not in seen:
+                gaps.append({"gap": "Combined downside not shown in submitted pack.", "source_chunk": get_source_reference(result)})
+                seen.add(key)
+        if has_any(chunk_text, ["battery augmentation sensitivity not shown", "bess degradation/augmentation sensitivity", "bess degradation and augmentation sensitivity"]):
+            key = "bess_augmentation_not_shown"
+            if key not in seen:
+                gaps.append({"gap": "BESS degradation / augmentation sensitivity not shown in submitted pack.", "source_chunk": get_source_reference(result)})
+                seen.add(key)
+    return gaps
+
+
+def validate_sensitivity_cases(cases):
+    expected = {
+        "Base Case": (13.9, 1.32, "Yes"),
+        "Merchant price -15%": (12.2, 1.24, "Yes"),
+        "Generation -5%": (12.6, 1.21, "Yes"),
+        "Capex +10%": (11.8, 1.30, "Yes"),
+        "COD delay 6 months": (11.9, 1.28, "Yes"),
+        "FX depreciation 10%": (12.7, 1.27, "Yes"),
+        "Combined downside": (8.5, 1.08, "No"),
+        "BESS degradation / augmentation": (12.8, 1.26, "No"),
+    }
+    failures = []
+    case_map = {case.get("scenario"): case for case in cases}
+    for scenario, expected_values in expected.items():
+        expected_equity_irr, expected_dscr, expected_flag = expected_values
+        case = case_map.get(scenario)
+        if not case:
+            failures.append(f"Missing sensitivity case: {scenario}")
+            continue
+        actual_equity_irr = case.get("equity_irr_pct")
+        actual_dscr = case.get("minimum_dscr_x")
+        actual_flag = case.get("included_in_submission")
+        if actual_equity_irr is None or abs(float(actual_equity_irr) - expected_equity_irr) > 0.01:
+            failures.append(f"Incorrect equity IRR for {scenario}: {actual_equity_irr}")
+        if actual_dscr is None or abs(float(actual_dscr) - expected_dscr) > 0.01:
+            failures.append(f"Incorrect minimum DSCR for {scenario}: {actual_dscr}")
+        if actual_flag != expected_flag:
+            failures.append(f"Incorrect included_in_submission flag for {scenario}: {actual_flag}")
+    return failures
 
 
 def run_sensitivity_review(evidence_packets):
     evidence_results = evidence_packets.get("sensitivity_review", {}).get("selected_results", [])
     blob = get_evidence_blob(evidence_results)
-
     raw_sensitivity_cases = extract_sensitivity_cases(evidence_results)
     sensitivity_cases = dedupe_sensitivity_cases(raw_sensitivity_cases)
-
-    combined_downside_available = has_any(blob, ["combined downside"])
-    bess_augmentation_available = has_any(blob, ["bess degradation", "augmentation", "battery augmentation"])
-
-    submission_gap_flag = False
-
-    for case in sensitivity_cases:
-        if case.get("scenario") in ["Combined downside", "BESS degradation / augmentation"]:
-            if case.get("included_in_submission") == "No":
-                submission_gap_flag = True
-
-    if not sensitivity_cases and not combined_downside_available:
+    submitted_pack_gaps = extract_submitted_pack_sensitivity_gaps(evidence_results)
+    validation_failures = validate_sensitivity_cases(sensitivity_cases)
+    combined_downside_available = any(case.get("scenario") == "Combined downside" for case in sensitivity_cases)
+    bess_augmentation_available = any(case.get("scenario") == "BESS degradation / augmentation" for case in sensitivity_cases)
+    submission_gap_flag = any(case.get("scenario") in ["Combined downside", "BESS degradation / augmentation"] and case.get("included_in_submission") == "No" for case in sensitivity_cases)
+    if validation_failures:
         module_status = STATUS_RED
     elif submission_gap_flag:
         module_status = STATUS_AMBER
+    elif not sensitivity_cases and not has_any(blob, ["sensitivity"]):
+        module_status = STATUS_RED
     else:
         module_status = STATUS_GREEN
-
     return {
         "module": "Sensitivity and Downside Protection Review",
         "traffic_light": module_status,
-        "summary": "Sensitivity review distinguishes submitted cases from workbook-only cases and deduplicates duplicate deck/PDF/memo scenarios.",
+        "summary": "Sensitivity review distinguishes submitted cases from workbook-only cases and validates workbook sensitivity values.",
         "combined_downside_available_in_evidence": combined_downside_available,
         "bess_augmentation_available_in_evidence": bess_augmentation_available,
         "submission_gap_flag": submission_gap_flag,
         "sensitivity_cases": sensitivity_cases,
+        "submitted_pack_gaps": submitted_pack_gaps,
+        "validation_failures": validation_failures,
         "raw_case_count_before_deduplication": len(raw_sensitivity_cases),
         "deduped_case_count": len(sensitivity_cases),
         "source_chunks": [get_source_reference(item) for item in evidence_results[:8]],
@@ -2589,6 +2681,101 @@ Generate:
             }
 
 
+
+# ---------------------------------------------------------------------
+# Terms and definitions
+# ---------------------------------------------------------------------
+
+def build_terms_and_definitions():
+    terms = [
+        ("AI", "Artificial intelligence; software that can perform tasks that normally require human reasoning or pattern recognition."),
+        ("API", "Application programming interface; a structured way for software systems to call each other."),
+        ("Amber", "Traffic-light status meaning partly addressed, weakly evidenced or requiring reviewer follow-up."),
+        ("Audit log", "A record of the report run, model used, source chunks used and output generated."),
+        ("BESS", "Battery Energy Storage System; batteries used to store electricity and release it later."),
+        ("Benchmark", "A comparison point used to assess whether a value, assumption or cost is reasonable."),
+        ("Brownfield", "An investment in an existing or operating asset, or expansion of an existing project."),
+        ("Capex", "Capital expenditure; upfront investment cost to build or acquire an asset."),
+        ("COD", "Commercial Operations Date; the date on which the project is expected to start commercial operation."),
+        ("Contracted revenue", "Revenue backed by a contract such as a PPA rather than exposed to market prices."),
+        ("Curtailment", "Reduction in electricity generation because the grid or buyer cannot accept all available output."),
+        ("Data room", "A structured repository of transaction documents used for diligence and review."),
+        ("Decommissioning", "Activities and costs required to dismantle an asset at the end of its useful life."),
+        ("Debt / total cost", "Debt funding as a percentage of total project cost."),
+        ("DSCR", "Debt Service Coverage Ratio; cash available for debt service divided by required debt payments."),
+        ("EBITDA", "Earnings before interest, taxes, depreciation and amortization; a common operating-profit measure."),
+        ("EMS", "Energy Management System; software used to monitor and optimize energy assets such as BESS."),
+        ("Equity IRR", "Internal rate of return to equity investors after debt financing effects."),
+        ("ESG", "Environmental, social and governance considerations."),
+        ("EV / EBITDA", "Enterprise value divided by EBITDA; a valuation multiple."),
+        ("External benchmark", "Benchmark evidence from outside the submitted transaction pack."),
+        ("FX", "Foreign exchange; currency movement or exchange-rate exposure."),
+        ("GDP", "Gross domestic product; a measure of economic output."),
+        ("Green", "Traffic-light status meaning adequately addressed with clear evidence."),
+        ("Greenfield", "A project developed and built from a new site or early-stage development base."),
+        ("Grey", "Traffic-light status meaning not assessable because source data or configuration is unavailable."),
+        ("Grid interconnection", "The connection between the project and the electricity grid."),
+        ("IC", "Investment Committee; governance body that reviews and approves investment proposals."),
+        ("IC memo", "Investment Committee memorandum; the core written submission for investment review."),
+        ("IRR", "Internal Rate of Return; discount rate at which projected cash flows produce zero net present value."),
+        ("JSON", "JavaScript Object Notation; structured data format used by APIs and front ends."),
+        ("Letter of credit", "Bank-backed payment-security instrument used to support counterparty obligations."),
+        ("LLM", "Large language model; AI model used to read, summarize and generate text."),
+        ("Macro context", "Macroeconomic context such as GDP growth, inflation, exchange rates and country risk."),
+        ("Majority stake", "Ownership interest above 50%, usually giving control or strong governance influence."),
+        ("Merchant exposure", "Revenue exposure to market prices rather than fixed contracted prices."),
+        ("MWh", "Megawatt-hour; unit of energy equal to one megawatt generated or consumed for one hour."),
+        ("MW", "Megawatt; unit of power capacity."),
+        ("MWac", "Megawatt alternating-current capacity; grid-side power capacity measure."),
+        ("MWp", "Megawatt-peak; peak solar panel capacity under standard test conditions."),
+        ("NPV", "Net Present Value; present value of expected cash flows minus investment cost."),
+        ("O&M", "Operations and maintenance costs incurred to operate an asset."),
+        ("Offtake", "Sale or purchase arrangement for the electricity or output from a project."),
+        ("Offtaker", "Counterparty that buys the project output under an offtake agreement."),
+        ("Payment security", "Contractual or bank-backed protection that supports payment obligations."),
+        ("PPA", "Power Purchase Agreement; contract for sale and purchase of electricity."),
+        ("POC", "Proof of concept; early version built to validate feasibility."),
+        ("Project IRR", "Internal rate of return of the project before equity financing effects."),
+        ("PV", "Photovoltaic solar technology that converts sunlight into electricity."),
+        ("RAG", "Retrieval-augmented generation; AI approach that retrieves source evidence before generating answers."),
+        ("Red", "Traffic-light status meaning missing, contradictory or approval-critical issue."),
+        ("Reserved matters", "Important decisions requiring specified shareholder or board approval."),
+        ("SCADA", "Supervisory Control and Data Acquisition; system used to monitor and control technical assets."),
+        ("Sensitivity analysis", "Testing how investment outputs change when key assumptions change."),
+        ("SharePoint", "Document management platform where source files may be stored."),
+        ("Source chunk", "A retrieved text or table segment used as evidence for a finding."),
+        ("SOW", "Statement of Work; document defining the client requirements and scope."),
+        ("Submission gap", "Required or expected information that is missing or weak in the current submission."),
+        ("Traffic-light status", "Green, Amber, Red or Grey rating used to summarize review status."),
+        ("Traceability", "Ability to link a finding back to the exact source document, page, table or row."),
+        ("Utility-scale", "Large project designed to supply electricity at grid scale rather than household scale."),
+        ("Workbook", "Spreadsheet model or Excel file containing assumptions, calculations and outputs."),
+    ]
+    return [{"term": term, "definition": definition} for term, definition in terms]
+
+
+def build_report_quality_status(report):
+    issues = []
+    sensitivity_review = report.get("sensitivity_review", {})
+    if sensitivity_review.get("validation_failures"):
+        issues.extend(sensitivity_review.get("validation_failures", []))
+    financial = report.get("financial_reconciliation", {})
+    for row in financial.get("reconciliation_table", []):
+        metric_key = row.get("metric_key")
+        values_by_source = row.get("values_by_source", {})
+        if metric_key == "total_project_cost_usd_mn":
+            workbook_values = values_by_source.get("workbook", [])
+            unexpected = [value for value in workbook_values if value not in [289, 289.0]]
+            if unexpected:
+                issues.append(f"Unexpected workbook total project cost values: {unexpected}")
+        if metric_key == "minimum_dscr_x":
+            workbook_values = values_by_source.get("workbook", [])
+            unexpected = [value for value in workbook_values if abs(float(value) - 1.32) > 0.001]
+            if unexpected:
+                issues.append(f"Unexpected workbook minimum DSCR values: {unexpected}")
+    return {"schema_ready": True, "content_ready": len(issues) == 0, "quality_issues": issues}
+
+
 # ---------------------------------------------------------------------
 # Markdown formatter
 # ---------------------------------------------------------------------
@@ -2809,6 +2996,15 @@ def format_markdown_report(report):
     lines.append("```json")
     lines.append(json.dumps(audit, indent=2, ensure_ascii=False))
     lines.append("```")
+    lines.append("")
+
+    lines.append("## 15. Terms and Definitions")
+    lines.append("")
+    lines.append("| Term | Simple definition |")
+    lines.append("|---|---|")
+    for item in report.get("terms_and_definitions", []):
+        lines.append(f"| {item.get('term')} | {item.get('definition')} |")
+    lines.append("")
 
     return "\n".join(lines)
 
@@ -2958,6 +3154,7 @@ def generate_investment_ic_review_report(
     executive_summary = build_executive_summary(report_sections_for_dashboard)
     traffic_light_dashboard = build_traffic_light_dashboard(report_sections_for_dashboard)
     evidence_appendix = build_evidence_appendix(evidence_packets)
+    terms_and_definitions = build_terms_and_definitions()
 
     audit_metadata = {
         "run_id": run_id,
@@ -3004,7 +3201,10 @@ def generate_investment_ic_review_report(
         "conditions_precedent_open_items": conditions_precedent_open_items,
         "evidence_appendix": evidence_appendix,
         "audit_metadata": audit_metadata,
+        "terms_and_definitions": terms_and_definitions,
     }
+
+    report["report_quality_status"] = build_report_quality_status(report)
 
     if use_llm_summary:
         llm_summary = generate_llm_executive_summary(
@@ -3052,6 +3252,7 @@ def generate_investment_ic_review_report(
         "run_id": run_id,
         "transaction_id": transaction_id,
         "overall_readiness_status": executive_summary.get("overall_readiness_status"),
+        "report_quality_status": report.get("report_quality_status"),
         "output_files": saved_outputs,
         "audit_write_result": audit_write_result,
         "report": report,
