@@ -144,7 +144,7 @@ def build_document_inventory():
             # - PDFs, DOCXs, TXTx, MDs, HTMLs and JSONs are indexed in RAG
             # - CSVs, XLSX/ XLSs are not directly indexed in RAG, they are used for analytical purposes
             # - ZIP is not indexed directly, it is extracted first
-            if file_ext in [".pdf", ".docx", ".txt", ".md", ".html", ".json"]:
+            if file_ext in [".pdf", ".docx", ".txt", ".md", ".html", ".json", ".pptx"]:
                 index_in_rag = "Yes"
             elif file_ext in [".csv", ".xlsx", ".xls", ".identifier", ".pdf:mshield", ".json:mshield", ".xml:mshield", ".txt:mshield", ".csv:mshield"]:
                 index_in_rag = "No"
