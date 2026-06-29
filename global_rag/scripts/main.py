@@ -30,8 +30,8 @@ def health_check():
     return {"status": "ok", "message": "FastAPI service is running"}
 
 @app.get(path="/build_document_inventory", status_code=200)
-def build_doc_inv():
-    build_document_inventory_output = bdi.build_document_inventory()
+def build_doc_inv(client_data: str):
+    build_document_inventory_output = bdi.build_document_inventory(client_data=client_data)
     api_response = JSONResponse(
         {
             "status": "ok",
