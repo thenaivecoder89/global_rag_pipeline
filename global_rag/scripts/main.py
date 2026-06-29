@@ -3,7 +3,9 @@ import global_rag.scripts.config as cnfg
 import global_rag.scripts.extract_documents as ed
 import global_rag.scripts.chunk_documents as cd
 import global_rag.scripts.embed_chunks as emb
+import global_rag.scripts.retrieve_chunks as ret
 
+from typing import Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
@@ -80,6 +82,35 @@ def embed_chunks():
         {
             "status": "ok",
             "output": embed_documents_output
+        }
+    )
+
+    return api_response
+
+@app.get(path="/retrieve_chunks", status_code=200)
+def retrieve_chunks_api(
+    q: str,
+    top_k: int = 10,
+    mode: str = "hybrid",
+    corpus_zone: Optional[str] = None,
+    corpus_pack: Optional[str] = None,
+    document_id: Optional[str] = None,
+    max_chunk_chars: int = 3000
+):
+    retrieval_output = ret.retrieve_chunks(
+        query_text=q,
+        top_k=top_k,
+        mode=mode,
+        corpus_zone=corpus_zone,
+        corpus_pack=corpus_pack,
+        document_id=document_id,
+        max_chunk_chars=max_chunk_chars
+    )
+
+    api_response = JSONResponse(
+        {
+            "status": "ok",
+            "output": retrieval_output
         }
     )
 
