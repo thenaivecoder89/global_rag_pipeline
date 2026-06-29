@@ -268,5 +268,6 @@ def build_document_inventory():
     out_string = f"Document inventory successfully loaded."
     return out_string
 
-print(f'Executing the build program')
-build_document_inventory()
+if __name__ == "__main__":
+    print("Executing the build program")
+    build_document_inventory()
