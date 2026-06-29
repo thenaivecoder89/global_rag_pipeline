@@ -1,4 +1,4 @@
-# File name: embed_chunks.py
+# File_name: embed_chunks.py
 # Purpose:
 # Generate embeddings for existing chunks and update chunks.embedding.
 #
@@ -8,13 +8,13 @@
 # Output update:
 # 1. chunks.embedding
 # 2. chunks.embedding_model
-# 3. chunks.search_vector
 #
 # Notes:
 # - Bare-bones POC version.
 # - No classes.
 # - Uses OpenAI text-embedding-3-small from config.py.
 # - Assumes pgvector extension is enabled and chunks.embedding is vector(1536).
+# - search_vector is NOT manually updated because it is a generated column.
 
 import pandas as pd
 from sqlalchemy import create_engine, text
@@ -60,7 +60,6 @@ def check_chunks_ready(engine):
         "chunk_text",
         "embedding_model",
         "embedding",
-        "search_vector",
     ]
 
     missing_columns = []
@@ -96,7 +95,6 @@ def embed_chunks():
 
     check_chunks_ready(engine)
 
-    # Keep batch size modest for Railway/API stability.
     batch_size = 50
 
     chunks_sql = """
@@ -129,8 +127,7 @@ def embed_chunks():
         UPDATE chunks
         SET
             embedding = CAST(:embedding AS vector),
-            embedding_model = :embedding_model,
-            search_vector = to_tsvector('english', COALESCE(chunk_text, ''))
+            embedding_model = :embedding_model
         WHERE chunk_id = :chunk_id;
     """)
 
@@ -142,7 +139,7 @@ def embed_chunks():
         for _, row in batch_df.iterrows():
             chunk_text = clean_text(row["chunk_text"])
 
-            # Simple safety cap. Your chunking is already around 1,000 tokens,
+            # Safety cap. Your chunking is already around 1,000 tokens,
             # so this should normally not cut anything.
             chunk_text = chunk_text[:30000]
 
