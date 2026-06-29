@@ -6,3 +6,11 @@ pandas
 sqlalchemy
 openpyxl
 python-dotenv
+psycopg2-binary
+pymupdf
+python-docx
+python-pptx
+beautifulsoup4
+lxml
+openpyxl
+xlrd
