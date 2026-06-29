@@ -510,7 +510,6 @@ def chunk_documents():
                     token_count_estimate,
                     source_reference,
                     embedding_model,
-                    search_vector,
                     created_at
                 )
                 VALUES (
@@ -528,7 +527,6 @@ def chunk_documents():
                     :token_count_estimate,
                     :source_reference,
                     :embedding_model,
-                    to_tsvector('english', COALESCE(:chunk_text, '')),
                     NOW()
                 );
             """)
