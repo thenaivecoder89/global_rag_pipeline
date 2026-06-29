@@ -74,7 +74,7 @@ def config_base():
 
     
 
-def config_paths():
+def config_paths(client_data: str):
     # Project paths
     project_root = Path(__file__).resolve().parent.parent
     corpus_dir =  project_root / "corpus"
@@ -86,6 +86,9 @@ def config_paths():
     extracted_text_dir = output_dir / "extracted_text"
     findings_register_dir = output_dir / "findings_register"
 
+    # Resolving active client data folder
+    active_client_data_dir = client_data_dir / client_data
+
     # Corpus packs
     corpus_packs = {
         "01_RAG_Public_Deal_Documents": corpus_dir / "01_RAG_Public_Deal_Documents",
@@ -96,7 +99,7 @@ def config_paths():
 
     # Client data packs
     client_data_packs = {
-        "TXN_HELIOS_001": client_data_dir / "TXN_HELIOS_001"
+        client_data: active_client_data_dir
     }
 
     # File handling
@@ -133,7 +136,7 @@ def config_paths():
     required_input_folders = [
         client_data_dir,
         corpus_dir,
-        client_data_packs["TXN_HELIOS_001"],
+        active_client_data_dir,
         corpus_packs["01_RAG_Public_Deal_Documents"],
         corpus_packs["02_Benchmark_and_Market_Data"],
         corpus_packs["03_ML_Input_Datasets"],
@@ -153,6 +156,7 @@ def config_paths():
         print("Forensic RAG configuration loaded successfully!")
         print(f"Project root: {project_root}")
         print(f"Client data folder: {client_data_dir}")
+        print(f"Active client data folder: {active_client_data_dir}")
         print(f"Corpus data folder: {corpus_dir}")
         print(f"Outputs folder:  {output_dir}")
 
