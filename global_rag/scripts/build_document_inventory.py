@@ -17,8 +17,8 @@ from sqlalchemy import create_engine
 # Import paths and settings from the config file
 from global_rag.scripts import config
 
-def build_document_inventory():
-    config_settings = config.config_paths()
+def build_document_inventory(client_data: str):
+    config_settings = config.config_paths(client_data=client_data)
     config_base = config.config_base()
     
     # Establish DB connection
