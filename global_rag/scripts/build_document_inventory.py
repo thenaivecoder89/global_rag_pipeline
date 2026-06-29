@@ -222,7 +222,7 @@ def build_document_inventory():
             con=conn,
             index=False,
             method="multi",
-            if_exists="append"
+            if_exists="replace"
         )
 
     if __name__ == "__main__":
