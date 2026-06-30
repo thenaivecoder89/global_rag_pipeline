@@ -337,8 +337,12 @@ def infer_source_label(result):
 
 def get_default_module_boost_terms(transaction_profile=None):
     transaction_profile = transaction_profile or {}
-    asset_class = normalize_text(transaction_profile.get("asset_class"))
-    revenue_model = normalize_text(transaction_profile.get("revenue_model"))
+    asset_classes = transaction_profile.get("asset_classes") or [transaction_profile.get("primary_asset_class") or transaction_profile.get("asset_class")]
+    asset_classes = [normalize_text(asset_class) for asset_class in asset_classes if clean_text(asset_class)]
+    revenue_models = transaction_profile.get("revenue_models") or [transaction_profile.get("revenue_model")]
+    revenue_models = [normalize_text(revenue_model) for revenue_model in revenue_models if clean_text(revenue_model)]
+    asset_class = normalize_text(transaction_profile.get("primary_asset_class") or transaction_profile.get("asset_class"))
+    revenue_model = " ".join(revenue_models)
     profile_terms = get_profile_terms(transaction_profile).split() if transaction_profile else []
 
     terms = {
@@ -396,19 +400,19 @@ def get_default_module_boost_terms(transaction_profile=None):
         ] + profile_terms,
     }
 
-    if asset_class in ["solar_pv", "onshore_wind", "offshore_wind"]:
+    if any(item in asset_classes for item in ["solar_pv", "onshore_wind", "offshore_wind"]):
         terms["market_offtake_revenue"].extend(["ppa", "cfd", "merchant", "power price"])
         terms["sensitivity_review"].extend(["generation", "resource"])
 
-    if asset_class == "bess":
+    if "bess" in asset_classes:
         terms["market_offtake_revenue"].extend(["tolling", "ancillary services", "capacity", "shifting"])
         terms["sensitivity_review"].extend(["augmentation", "degradation", "cycling"])
 
-    if asset_class == "hydrogen":
+    if "hydrogen" in asset_classes:
         terms["market_offtake_revenue"].extend(["hydrogen offtake", "ammonia", "lcoh", "take-or-pay"])
         terms["sensitivity_review"].extend(["utilisation", "electricity price", "electrolyser"])
 
-    if asset_class == "regulated_grid_distribution" or "regulated" in revenue_model:
+    if "regulated_grid_distribution" in asset_classes or "regulated" in revenue_model:
         terms["market_offtake_revenue"].extend(["regulated return", "tariff", "allowed revenue", "rab"])
         terms["risk_review"].extend(["regulatory", "allowed return", "grid modernisation"])
 
@@ -527,13 +531,15 @@ def merge_config_lists(*configs):
 
 
 def get_profile_terms(transaction_profile):
-    asset_class = normalize_text(transaction_profile.get("asset_class"))
+    asset_classes = " ".join(transaction_profile.get("asset_classes", []))
+    revenue_models = " ".join(transaction_profile.get("revenue_models", []))
+    asset_class = normalize_text(transaction_profile.get("primary_asset_class") or transaction_profile.get("asset_class"))
     revenue_model = normalize_text(transaction_profile.get("revenue_model"))
     energy_value_chain = normalize_text(transaction_profile.get("energy_value_chain"))
     technology_subtypes = " ".join(transaction_profile.get("technology_subtypes", []))
 
     return clean_text(
-        f"{asset_class} {revenue_model} {energy_value_chain} {technology_subtypes}"
+        f"{asset_class} {asset_classes} {revenue_model} {revenue_models} {energy_value_chain} {technology_subtypes}"
     )
 
 
@@ -546,7 +552,8 @@ def get_risk_taxonomy_terms(review_config):
 
 
 def get_asset_class_risk_overlay_library(transaction_profile):
-    asset_class = normalize_text(transaction_profile.get("asset_class"))
+    asset_classes = transaction_profile.get("asset_classes") or [transaction_profile.get("primary_asset_class") or transaction_profile.get("asset_class")]
+    asset_classes = [normalize_text(asset_class) for asset_class in asset_classes if clean_text(asset_class)]
     libraries = {
         "solar_pv": [
             {
@@ -664,7 +671,10 @@ def get_asset_class_risk_overlay_library(transaction_profile):
             },
         ],
     }
-    return {"asset_class_risk_taxonomy": libraries.get(asset_class, [])}
+    risk_items = []
+    for asset_class in asset_classes:
+        risk_items.extend(libraries.get(asset_class, []))
+    return {"asset_class_risk_taxonomy": risk_items}
 
 
 def get_legal_risk_overlay_library(transaction_profile):
@@ -746,7 +756,8 @@ def get_market_geography_overlay_library(transaction_profile):
 
 
 def get_revenue_model_overlay_library(transaction_profile):
-    revenue_model = normalize_text(transaction_profile.get("revenue_model"))
+    revenue_models = transaction_profile.get("revenue_models") or [transaction_profile.get("revenue_model")]
+    revenue_models = [normalize_text(revenue_model) for revenue_model in revenue_models if clean_text(revenue_model)]
     overlays = {
         "merchant": {
             "asset_class_risk_taxonomy": [
@@ -804,11 +815,15 @@ def get_revenue_model_overlay_library(transaction_profile):
             ]
         },
     }
-    return overlays.get(revenue_model, {})
+    merged_overlay = {}
+    for revenue_model in revenue_models:
+        merged_overlay = merge_config_lists(merged_overlay, overlays.get(revenue_model, {}))
+    return merged_overlay
 
 
 def get_sensitivity_overlay_library(transaction_profile):
-    asset_class = normalize_text(transaction_profile.get("asset_class"))
+    asset_classes = transaction_profile.get("asset_classes") or [transaction_profile.get("primary_asset_class") or transaction_profile.get("asset_class")]
+    asset_classes = [normalize_text(asset_class) for asset_class in asset_classes if clean_text(asset_class)]
     themes = {
         "solar_pv": {
             "required": ["Irradiation - P90", "Generation -5%", "Curtailment downside"],
@@ -841,7 +856,13 @@ def get_sensitivity_overlay_library(transaction_profile):
             "optional": [],
         },
     }
-    tiered_themes = themes.get(asset_class, {"required": [], "recommended": [], "optional": []})
+    tiered_themes = {"required": [], "recommended": [], "optional": []}
+    for asset_class in asset_classes:
+        asset_themes = themes.get(asset_class, {"required": [], "recommended": [], "optional": []})
+        for tier_name in ["required", "recommended", "optional"]:
+            for theme in asset_themes.get(tier_name, []):
+                if theme not in tiered_themes[tier_name]:
+                    tiered_themes[tier_name].append(theme)
     return {
         "sensitivity_theme_library": (
             tiered_themes.get("required", [])
@@ -884,6 +905,25 @@ def finalize_review_config(config_pack):
     return config_pack
 
 
+def checklist_item_is_applicable(item, transaction_profile):
+    asset_classes = transaction_profile.get("asset_classes") or [transaction_profile.get("primary_asset_class") or transaction_profile.get("asset_class")]
+    revenue_models = transaction_profile.get("revenue_models") or [transaction_profile.get("revenue_model")]
+    applicable_asset_classes = item.get("applicable_asset_classes", [])
+    applicable_revenue_models = item.get("applicable_revenue_models", [])
+
+    asset_applicable = not applicable_asset_classes or bool(set(asset_classes).intersection(set(applicable_asset_classes)))
+    revenue_applicable = not applicable_revenue_models or bool(set(revenue_models).intersection(set(applicable_revenue_models)))
+    return asset_applicable and revenue_applicable
+
+
+def apply_checklist_applicability_defaults(checklist):
+    for item in checklist:
+        item.setdefault("applicable_asset_classes", [])
+        item.setdefault("applicable_revenue_models", [])
+        item.setdefault("not_applicable_status", STATUS_GREY)
+    return checklist
+
+
 def load_review_config(transaction_profile=None):
     transaction_profile = transaction_profile or {}
     profile_terms = get_profile_terms(transaction_profile)
@@ -924,12 +964,14 @@ def load_review_config(transaction_profile=None):
             "required_item": "Independent market price / revenue assumption support",
             "evidence_terms": ["price curve", "market price", "price forecast", "independent price", "revenue assumption"],
             "weak_terms": ["not appended", "not included", "missing", "independent curve absent"],
+            "applicable_revenue_models": ["merchant", "hybrid_contract_merchant"],
         },
         {
             "item_id": "C07_OFFTAKER_CREDIT",
             "required_item": "Offtaker credit and payment-security evidence",
             "evidence_terms": ["offtaker", "credit", "payment security", "letter of credit"],
             "weak_terms": ["under discussion", "under negotiation", "not executed", "no independent credit"],
+            "applicable_revenue_models": ["ppa", "cfd", "hydrogen_offtake"],
         },
         {
             "item_id": "C08_ESG_LEGAL_REGULATORY",
@@ -942,6 +984,7 @@ def load_review_config(transaction_profile=None):
             "required_item": "Land, easements and permits",
             "evidence_terms": ["land", "easement", "permit", "permitting"],
             "weak_terms": ["open", "remain open", "final easements", "updates"],
+            "applicable_asset_classes": ["solar_pv", "onshore_wind", "offshore_wind", "bess", "hydrogen"],
         },
         {
             "item_id": "C10_CYBERSECURITY",
@@ -954,6 +997,7 @@ def load_review_config(transaction_profile=None):
             "required_item": "Decommissioning / end-of-life reserve",
             "evidence_terms": ["decommissioning", "end-of-life", "disposal", "dismantling", "restoration"],
             "weak_terms": ["not assessed", "no funded", "no reserve"],
+            "applicable_asset_classes": ["solar_pv", "onshore_wind", "offshore_wind", "bess", "hydrogen"],
         },
         {
             "item_id": "C12_BENCHMARK_SUPPORT",
@@ -968,6 +1012,63 @@ def load_review_config(transaction_profile=None):
             "weak_terms": ["subject to", "require", "close", "obtain", "reconcile"],
         },
     ]
+    completeness_checklist.extend(
+        [
+            {
+                "item_id": "C14_REG_RECOVERY_APPROVAL",
+                "required_item": "Regulatory recovery approval",
+                "evidence_terms": ["regulatory approval", "recovery approval", "approved recovery", "regulator approval"],
+                "weak_terms": ["pending", "not approved", "under review", "not final"],
+                "applicable_asset_classes": ["regulated_grid_distribution"],
+                "applicable_revenue_models": ["regulated_grid_distribution", "regulated_return"],
+            },
+            {
+                "item_id": "C15_RAB_ALLOWED_REVENUE_TARIFF",
+                "required_item": "RAB / allowed revenue / tariff treatment",
+                "evidence_terms": ["rab", "regulated asset base", "allowed revenue", "tariff treatment", "distribution tariff"],
+                "weak_terms": ["not final", "not approved", "not quantified", "pending"],
+                "applicable_asset_classes": ["regulated_grid_distribution"],
+                "applicable_revenue_models": ["regulated_grid_distribution", "regulated_return"],
+            },
+            {
+                "item_id": "C16_RECOVERY_LAG_TRUE_UP",
+                "required_item": "Recovery lag / true-up mechanism",
+                "evidence_terms": ["recovery lag", "true-up", "true up", "pass-through", "regulatory lag"],
+                "weak_terms": ["not modelled", "not quantified", "unclear", "pending"],
+                "applicable_asset_classes": ["regulated_grid_distribution"],
+                "applicable_revenue_models": ["regulated_grid_distribution", "regulated_return"],
+            },
+            {
+                "item_id": "C17_VENDOR_EPC_PRICING_LOCK",
+                "required_item": "Vendor / EPC pricing lock",
+                "evidence_terms": ["vendor", "epc", "pricing lock", "fixed price", "locked pricing", "supplier"],
+                "weak_terms": ["not fixed", "not locked", "under negotiation", "pending"],
+                "applicable_asset_classes": ["regulated_grid_distribution"],
+            },
+            {
+                "item_id": "C18_CYBER_OT_ASSESSMENT",
+                "required_item": "Cyber / OT assessment",
+                "evidence_terms": ["cyber", "ot", "operational technology", "scada", "ems", "cybersecurity"],
+                "weak_terms": ["not assessed", "no dedicated assessment", "pending", "not completed"],
+                "applicable_asset_classes": ["regulated_grid_distribution"],
+            },
+            {
+                "item_id": "C19_IMPLEMENTATION_ROLLOUT_RISK",
+                "required_item": "Implementation rollout risk",
+                "evidence_terms": ["rollout", "implementation", "deployment", "milestones", "schedule risk"],
+                "weak_terms": ["delayed", "not final", "pending", "not quantified"],
+                "applicable_asset_classes": ["regulated_grid_distribution"],
+            },
+            {
+                "item_id": "C20_BENEFIT_REALISATION",
+                "required_item": "Benefit-realisation evidence",
+                "evidence_terms": ["benefit realisation", "benefit realization", "loss reduction", "efficiency", "customer benefit"],
+                "weak_terms": ["not quantified", "not evidenced", "not tracked", "unclear"],
+                "applicable_asset_classes": ["regulated_grid_distribution"],
+            },
+        ]
+    )
+    completeness_checklist = apply_checklist_applicability_defaults(completeness_checklist)
 
     strategy_criteria = [
         {
@@ -1254,6 +1355,20 @@ def infer_category(blob, category_terms, default_value="not_identified"):
     return best_category, best_score
 
 
+def infer_categories(blob, category_terms):
+    matches = []
+    for category, terms in category_terms.items():
+        score = 0
+        for term in terms:
+            if normalize_text(term) in blob:
+                score += 1
+        if score > 0:
+            matches.append({"category": category, "score": score})
+
+    matches = sorted(matches, key=lambda item: item["score"], reverse=True)
+    return matches
+
+
 def infer_geography(blob):
     country_candidates = [
         "Australia",
@@ -1275,7 +1390,10 @@ def infer_geography(blob):
     return "not_identified"
 
 
-def infer_technology_subtypes(blob, asset_class):
+def infer_technology_subtypes(blob, asset_classes):
+    if isinstance(asset_classes, str):
+        asset_classes = [asset_classes]
+
     subtype_terms = {
         "solar_pv": ["utility-scale", "rooftop", "tracker", "fixed tilt", "bifacial"],
         "onshore_wind": ["onshore", "turbine", "wake losses"],
@@ -1285,9 +1403,10 @@ def infer_technology_subtypes(blob, asset_class):
     }
 
     output = []
-    for term in subtype_terms.get(asset_class, []):
-        if normalize_text(term) in blob:
-            output.append(term)
+    for asset_class in asset_classes:
+        for term in subtype_terms.get(asset_class, []):
+            if normalize_text(term) in blob and term not in output:
+                output.append(term)
 
     return output
 
@@ -1296,11 +1415,25 @@ def infer_transaction_profile(transaction_id, profile_results):
     blob = normalize_text(get_evidence_blob(profile_results))
     detection_terms = get_profile_detection_terms()
 
-    asset_class, asset_score = infer_category(blob, detection_terms["asset_class"])
+    asset_matches = infer_categories(blob, detection_terms["asset_class"])
+    revenue_matches = infer_categories(blob, detection_terms["revenue_model"])
+    asset_classes = [item["category"] for item in asset_matches]
+    revenue_models = [item["category"] for item in revenue_matches]
+
+    has_solar = "solar_pv" in asset_classes
+    has_bess = "bess" in asset_classes
+    if has_solar and has_bess:
+        primary_asset_class = "solar_pv_plus_bess"
+        asset_score = max(item["score"] for item in asset_matches)
+    else:
+        primary_asset_class = asset_classes[0] if asset_classes else "not_identified"
+        asset_score = asset_matches[0]["score"] if asset_matches else 0
+
     energy_value_chain, value_chain_score = infer_category(blob, detection_terms["energy_value_chain"])
     project_stage, stage_score = infer_category(blob, detection_terms["project_stage"])
     ownership, ownership_score = infer_category(blob, detection_terms["ownership"])
-    revenue_model, revenue_score = infer_category(blob, detection_terms["revenue_model"])
+    revenue_model = revenue_models[0] if revenue_models else "not_identified"
+    revenue_score = revenue_matches[0]["score"] if revenue_matches else 0
     contract_type, contract_score = infer_category(blob, detection_terms["contract_type"])
 
     detected_scores = [
@@ -1323,12 +1456,15 @@ def infer_transaction_profile(transaction_id, profile_results):
     return {
         "transaction_id": transaction_id,
         "energy_value_chain": energy_value_chain,
-        "asset_class": asset_class,
-        "technology_subtypes": infer_technology_subtypes(blob, asset_class),
+        "primary_asset_class": primary_asset_class,
+        "asset_class": primary_asset_class,
+        "asset_classes": asset_classes,
+        "technology_subtypes": infer_technology_subtypes(blob, asset_classes),
         "geography": infer_geography(blob),
         "project_stage": project_stage,
         "ownership": ownership,
         "revenue_model": revenue_model,
+        "revenue_models": revenue_models,
         "contract_type": contract_type,
         "development_scope": energy_value_chain,
         "classification_confidence": classification_confidence,
@@ -1377,12 +1513,14 @@ def build_retrieval_plan(transaction_profile, review_config):
         "corpus_zone": "client_data",
         "corpus_pack": transaction_id,
     }
-    asset_class = clean_text(transaction_profile.get("asset_class"))
+    asset_class = clean_text(transaction_profile.get("primary_asset_class") or transaction_profile.get("asset_class"))
+    asset_classes = clean_text(" ".join(transaction_profile.get("asset_classes", [])))
     revenue_model = clean_text(transaction_profile.get("revenue_model"))
+    revenue_models = clean_text(" ".join(transaction_profile.get("revenue_models", [])))
     project_stage = clean_text(transaction_profile.get("project_stage"))
     geography = clean_text(transaction_profile.get("geography"))
     profile_context = clean_text(
-        f"{asset_class} {revenue_model} {project_stage} {geography}"
+        f"{asset_class} {asset_classes} {revenue_model} {revenue_models} {project_stage} {geography}"
     )
     risk_taxonomy_terms = clean_text(" ".join(get_risk_taxonomy_terms(review_config)))
     benchmark_terms = clean_text(" ".join(review_config.get("benchmark_term_library", [])))
@@ -1796,8 +1934,9 @@ def first_number_in_text(text_value):
 # Completeness and readiness
 # ---------------------------------------------------------------------
 
-def run_completeness_check(review_config, evidence_packets):
+def run_completeness_check(review_config, evidence_packets, financial_reconciliation=None, sensitivity_review=None):
     checklist = review_config["completeness_checklist"]
+    transaction_profile = review_config.get("transaction_profile", {})
     evidence_results = evidence_packets.get("completeness_readiness", {}).get("selected_results", [])
     blob = get_evidence_blob(evidence_results)
 
@@ -1827,6 +1966,22 @@ def run_completeness_check(review_config, evidence_packets):
     rows = []
 
     for item in checklist:
+        if not checklist_item_is_applicable(item, transaction_profile):
+            rows.append(
+                {
+                    "item_id": item["item_id"],
+                    "required_item": item["required_item"],
+                    "status": READINESS_NOT_ASSESSED,
+                    "traffic_light": item.get("not_applicable_status", STATUS_GREY),
+                    "evidence_found": False,
+                    "weakness": "Checklist item is not applicable to the inferred asset class / revenue model.",
+                    "evidence_text": "",
+                    "source_chunks": [],
+                    "recommended_action": "No action required unless reviewer determines this item is applicable.",
+                }
+            )
+            continue
+
         positive_matches, weak_matches = split_evidence_by_terms(
             results=evidence_results,
             positive_terms=item["evidence_terms"],
@@ -1835,7 +1990,47 @@ def run_completeness_check(review_config, evidence_packets):
         evidence_found = bool(positive_matches or weak_matches)
         weak_evidence = bool(weak_matches)
 
-        if item["item_id"] == "C12_BENCHMARK_SUPPORT":
+        if item["item_id"] == "C02_FINANCIAL_METRICS" and financial_reconciliation:
+            inherited_status = financial_reconciliation.get("traffic_light")
+            if inherited_status == STATUS_RED:
+                status = READINESS_WEAK
+                traffic_light = STATUS_RED
+                weakness = "Financial reconciliation has Red metric conflicts."
+                evidence_found = True
+            elif inherited_status == STATUS_AMBER:
+                status = READINESS_WEAK
+                traffic_light = STATUS_AMBER
+                weakness = "Financial reconciliation has Amber metric issues."
+                evidence_found = True
+            elif evidence_found:
+                status = READINESS_PASS
+                traffic_light = STATUS_GREEN
+                weakness = "Financial metric evidence found and no higher-severity reconciliation issue was reported."
+            else:
+                status = READINESS_MISSING
+                traffic_light = STATUS_RED
+                weakness = "Financial metrics not found in retrieved submission materials."
+        elif item["item_id"] == "C04_SENSITIVITY_ANALYSIS" and sensitivity_review:
+            inherited_status = sensitivity_review.get("traffic_light")
+            if sensitivity_review.get("validation_failures"):
+                status = READINESS_WEAK
+                traffic_light = STATUS_RED if inherited_status == STATUS_RED else STATUS_AMBER
+                weakness = "Required sensitivity scenarios are missing or incomplete."
+                evidence_found = True
+            elif inherited_status == STATUS_AMBER:
+                status = READINESS_WEAK
+                traffic_light = STATUS_AMBER
+                weakness = "Sensitivity review reports Amber gaps."
+                evidence_found = True
+            elif evidence_found:
+                status = READINESS_PASS
+                traffic_light = STATUS_GREEN
+                weakness = "Sensitivity evidence found and required scenarios are not flagged as missing."
+            else:
+                status = READINESS_MISSING
+                traffic_light = STATUS_RED
+                weakness = "Sensitivity evidence not found in retrieved submission materials."
+        elif item["item_id"] == "C12_BENCHMARK_SUPPORT":
             if external_cost_available and external_ev_available:
                 status = READINESS_PASS
                 traffic_light = STATUS_GREEN
@@ -1849,16 +2044,16 @@ def run_completeness_check(review_config, evidence_packets):
             elif generic_benchmark_match and not asset_benchmark_match:
                 status = READINESS_WEAK
                 traffic_light = STATUS_AMBER
-                weakness = "Benchmark evidence was found, but it does not match the inferred asset class."
+                weakness = "External benchmark corpus evidence exists, but it does not match the inferred asset class."
                 evidence_found = True
             elif evidence_found:
                 status = READINESS_WEAK
                 traffic_light = STATUS_AMBER
-                weakness = "Only client-side benchmark assertions are evidenced; independent benchmark support is incomplete."
+                weakness = "Client-side benchmark assertions are evidenced, but matching external benchmark corpus evidence is unavailable."
             else:
                 status = READINESS_MISSING
                 traffic_light = STATUS_RED
-                weakness = "Benchmark support not found in retrieved evidence."
+                weakness = "Client failed to provide benchmark evidence and no matching external benchmark corpus evidence was found."
         else:
             if not evidence_found:
                 status = READINESS_MISSING
@@ -3134,19 +3329,34 @@ def run_generic_revenue_review(evidence_packets, transaction_profile):
 
 
 def run_revenue_model_review(evidence_packets, transaction_profile):
-    asset_class = normalize_text(transaction_profile.get("asset_class"))
-    revenue_model = normalize_text(transaction_profile.get("revenue_model"))
+    asset_classes = transaction_profile.get("asset_classes") or [transaction_profile.get("primary_asset_class") or transaction_profile.get("asset_class")]
+    asset_classes = [normalize_text(asset_class) for asset_class in asset_classes if clean_text(asset_class)]
+    revenue_models = transaction_profile.get("revenue_models") or [transaction_profile.get("revenue_model")]
+    revenue_models = [normalize_text(revenue_model) for revenue_model in revenue_models if clean_text(revenue_model)]
+    revenue_model_text = " ".join(revenue_models)
 
-    if asset_class == "hydrogen" or "hydrogen" in revenue_model:
+    if "hydrogen_offtake" in revenue_models or "hydrogen" in revenue_model_text:
         return run_hydrogen_offtake_review(evidence_packets, transaction_profile)
 
-    if asset_class == "bess" or "storage" in revenue_model or "tolling" in revenue_model:
+    if "tolling" in revenue_models or "capacity_payment" in revenue_models:
         return run_storage_revenue_review(evidence_packets, transaction_profile)
 
-    if asset_class == "regulated_grid_distribution" or "regulated" in revenue_model or "capacity_payment" in revenue_model:
+    if "regulated_grid_distribution" in revenue_models or "regulated_return" in revenue_models or "regulated" in revenue_model_text:
         return run_regulated_revenue_review(evidence_packets, transaction_profile)
 
-    if asset_class in ["solar_pv", "onshore_wind", "offshore_wind"]:
+    if any(model in revenue_models for model in ["ppa", "cfd", "merchant", "hybrid_contract_merchant"]):
+        return run_power_revenue_review(evidence_packets, transaction_profile)
+
+    if "bess" in asset_classes:
+        return run_storage_revenue_review(evidence_packets, transaction_profile)
+
+    if "hydrogen" in asset_classes:
+        return run_hydrogen_offtake_review(evidence_packets, transaction_profile)
+
+    if "regulated_grid_distribution" in asset_classes:
+        return run_regulated_revenue_review(evidence_packets, transaction_profile)
+
+    if any(asset_class in asset_classes for asset_class in ["solar_pv", "onshore_wind", "offshore_wind"]):
         return run_power_revenue_review(evidence_packets, transaction_profile)
 
     return run_generic_revenue_review(evidence_packets, transaction_profile)
@@ -3392,7 +3602,8 @@ def run_client_valuation_review(evidence_packets):
 
 
 def get_asset_benchmark_terms(transaction_profile):
-    asset_class = normalize_text(transaction_profile.get("asset_class"))
+    asset_classes = transaction_profile.get("asset_classes") or [transaction_profile.get("primary_asset_class") or transaction_profile.get("asset_class")]
+    asset_classes = [normalize_text(asset_class) for asset_class in asset_classes if clean_text(asset_class)]
     benchmark_terms = {
         "solar_pv": ["utility-scale pv", "solar", "pv", "photovoltaic", "inverter", "module", "solar - utility pv"],
         "onshore_wind": ["onshore wind", "wind turbine", "wind farm", "turbine", "wake loss"],
@@ -3401,7 +3612,12 @@ def get_asset_benchmark_terms(transaction_profile):
         "hydrogen": ["hydrogen", "electrolyser", "electrolyzer", "lcoh", "ammonia"],
         "regulated_grid_distribution": ["distribution network", "regulated grid", "grid modernisation", "grid modernization", "network capex"],
     }
-    return benchmark_terms.get(asset_class, [])
+    output = []
+    for asset_class in asset_classes:
+        for term in benchmark_terms.get(asset_class, []):
+            if term not in output:
+                output.append(term)
+    return output
 
 
 def run_external_benchmark_review(evidence_packets, transaction_profile=None, review_config=None):
@@ -4379,12 +4595,17 @@ def generate_investment_ic_review_report(
         profile_packet=profile_packet,
     )
 
-    completeness_readiness = run_completeness_check(review_config, evidence_packets)
+    financial_reconciliation = run_financial_reconciliation(evidence_packets, transaction_profile)
+    sensitivity_review = run_sensitivity_review(evidence_packets, review_config, transaction_profile)
+    completeness_readiness = run_completeness_check(
+        review_config,
+        evidence_packets,
+        financial_reconciliation=financial_reconciliation,
+        sensitivity_review=sensitivity_review,
+    )
     strategy_fit_assessment = run_strategy_fit_assessment(review_config, evidence_packets)
     historical_ic_question_coverage = run_historical_ic_question_check(review_config, evidence_packets)
-    financial_reconciliation = run_financial_reconciliation(evidence_packets, transaction_profile)
     market_offtake_revenue_review = run_revenue_model_review(evidence_packets, transaction_profile)
-    sensitivity_review = run_sensitivity_review(evidence_packets, review_config, transaction_profile)
     risk_review = run_risk_review(review_config, evidence_packets)
     valuation_review = run_client_valuation_review(evidence_packets)
     external_benchmark_review = run_external_benchmark_review(evidence_packets, transaction_profile, review_config)
