@@ -186,9 +186,9 @@ def sync_documents_from_inventory(engine):
         )
 
 
-def extract_documents():
+def extract_documents(client_data: str):
     config_base = config.config_base()
-    config_paths = config.config_paths()
+    config_paths = config.config_paths(client_data=client_data)
 
     engine = create_engine(
         url=config_base["db_url"],
