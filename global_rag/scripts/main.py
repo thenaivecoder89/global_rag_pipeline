@@ -51,8 +51,8 @@ def debug_paths():
     }
 
 @app.get(path="/extract_documents", status_code=200)
-def extract_docs():
-    extract_documents_output = ed.extract_documents()
+def extract_docs(client_data: str):
+    extract_documents_output = ed.extract_documents(client_data=client_data)
 
     api_response = JSONResponse(
         {
