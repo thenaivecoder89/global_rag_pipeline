@@ -165,6 +165,7 @@ def config_paths(client_data: str):
         "project_root": project_root,
         "corpus_dir": corpus_dir,
         "client_data_dir": client_data_dir,
+        "active_client_data_dir": active_client_data_dir,
         "output_dir": output_dir,
         "draft_report_dir": draft_report_dir,
         "exceptions_dir": exceptions_dir,

@@ -90,8 +90,12 @@ def get_remaining_chunks(engine):
     return int(remaining_df.loc[0, "remaining_chunks"])
 
 
-def embed_chunks():
+def embed_chunks(rebuild_inventory: str = "Y"):
     config_base = config.config_base()
+    rebuild_inventory = rebuild_inventory.strip().upper()
+
+    if rebuild_inventory not in ["Y", "N"]:
+        raise ValueError("rebuild_inventory must be 'Y' or 'N'.")
 
     db_url = config_base["db_url"]
     openai_api_key = config_base["openai_api_key"]
@@ -124,7 +128,14 @@ def embed_chunks():
 
     remaining_before = get_remaining_chunks(engine)
 
-    chunks_sql = """
+    embedding_filter = "embedding IS NULL"
+    if rebuild_inventory == "Y":
+        embedding_filter = """
+                embedding IS NULL
+                OR embedding_model IS DISTINCT FROM :embedding_model
+        """
+
+    chunks_sql = f"""
         SELECT
             chunk_id,
             chunk_text
@@ -132,8 +143,7 @@ def embed_chunks():
         WHERE chunk_text IS NOT NULL
           AND LENGTH(TRIM(chunk_text)) > 0
           AND (
-                embedding IS NULL
-                OR embedding_model IS DISTINCT FROM :embedding_model
+                {embedding_filter}
               )
         ORDER BY
             document_id,
@@ -189,6 +199,7 @@ def embed_chunks():
             return {
                 "message": "Embedding paused because OpenAI rate limit was reached.",
                 "status": "rate_limited",
+                "mode": "rebuild" if rebuild_inventory == "Y" else "update",
                 "embedding_model": embedding_model,
                 "embedding_dimension": embedding_dimension,
                 "remaining_chunks_before_run": remaining_before,
@@ -234,6 +245,7 @@ def embed_chunks():
     return {
         "message": "Document embedding batch completed.",
         "status": "ok",
+        "mode": "rebuild" if rebuild_inventory == "Y" else "update",
         "input_table": "chunks",
         "updated_table": "chunks",
         "embedding_model": embedding_model,
@@ -250,4 +262,4 @@ def embed_chunks():
 
 
 if __name__ == "__main__":
-    print(embed_chunks())
+    print(embed_chunks(rebuild_inventory="Y"))

@@ -186,9 +186,13 @@ def sync_documents_from_inventory(engine):
         )
 
 
-def extract_documents(client_data: str):
+def extract_documents(client_data: str, rebuild_inventory: str = "Y"):
     config_base = config.config_base()
     config_paths = config.config_paths(client_data=client_data)
+    rebuild_inventory = rebuild_inventory.strip().upper()
+
+    if rebuild_inventory not in ["Y", "N"]:
+        raise ValueError("rebuild_inventory must be 'Y' or 'N'.")
 
     engine = create_engine(
         url=config_base["db_url"],
@@ -198,10 +202,15 @@ def extract_documents(client_data: str):
     # Important: extracted_text / extracted_tables depend on documents.document_id
     sync_documents_from_inventory(engine)
 
-    inventory_sql = """
+    inventory_status_filter = ""
+    if rebuild_inventory == "N":
+        inventory_status_filter = "AND ingest_status = 'pending'"
+
+    inventory_sql = f"""
         SELECT *
         FROM build_document_inventory
         WHERE supported_file_type = 'Yes'
+          {inventory_status_filter}
         ORDER BY document_id;
     """
 
@@ -921,6 +930,8 @@ def extract_documents(client_data: str):
 
     return {
         "message": "Document extraction completed.",
+        "client_data": client_data,
+        "mode": "rebuild" if rebuild_inventory == "Y" else "update",
         "documents_processed": documents_processed,
         "documents_failed": documents_failed,
         "extracted_text_rows": extracted_text_rows_count,
@@ -930,4 +941,4 @@ def extract_documents(client_data: str):
 
 
 if __name__ == "__main__":
-    print(extract_documents())
+    print(extract_documents(client_data="TXN_ADDC_001", rebuild_inventory="Y"))

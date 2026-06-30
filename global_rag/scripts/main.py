@@ -5,6 +5,7 @@ import global_rag.scripts.chunk_documents as cd
 import global_rag.scripts.embed_chunks as emb
 import global_rag.scripts.retrieve_chunks as ret
 import global_rag.scripts.report_generation as rg
+import global_rag.scripts.wb_scraper as wb
 
 from typing import Optional
 from fastapi import FastAPI
@@ -30,8 +31,11 @@ def health_check():
     return {"status": "ok", "message": "FastAPI service is running"}
 
 @app.get(path="/build_document_inventory", status_code=200)
-def build_doc_inv(client_data: str):
-    build_document_inventory_output = bdi.build_document_inventory(client_data=client_data)
+def build_doc_inv(client_data: str, rebuild_inventory: str = "Y"):
+    build_document_inventory_output = bdi.build_document_inventory(
+        client_data=client_data,
+        rebuild_inventory=rebuild_inventory
+    )
     api_response = JSONResponse(
         {
             "status": "ok",
@@ -51,8 +55,11 @@ def debug_paths():
     }
 
 @app.get(path="/extract_documents", status_code=200)
-def extract_docs(client_data: str):
-    extract_documents_output = ed.extract_documents(client_data=client_data)
+def extract_docs(client_data: str, rebuild_inventory: str = "Y"):
+    extract_documents_output = ed.extract_documents(
+        client_data=client_data,
+        rebuild_inventory=rebuild_inventory
+    )
 
     api_response = JSONResponse(
         {
@@ -64,8 +71,10 @@ def extract_docs(client_data: str):
     return api_response
 
 @app.get(path="/chunk_documents", status_code=200)
-def chunk_docs():
-    chunk_documents_output = cd.chunk_documents()
+def chunk_docs(rebuild_inventory: str = "Y"):
+    chunk_documents_output = cd.chunk_documents(
+        rebuild_inventory=rebuild_inventory
+    )
 
     api_response = JSONResponse(
         {
@@ -77,13 +86,44 @@ def chunk_docs():
     return api_response
 
 @app.get(path="/embed_chunks", status_code=200)
-def embed_chunks():
-    embed_documents_output = emb.embed_chunks()
+def embed_chunks(rebuild_inventory: str = "Y"):
+    embed_documents_output = emb.embed_chunks(
+        rebuild_inventory=rebuild_inventory
+    )
 
     api_response = JSONResponse(
         {
             "status": "ok",
             "output": embed_documents_output
+        }
+    )
+
+    return api_response
+
+@app.get(path="/scrape_world_bank_wdi", status_code=200)
+def scrape_world_bank_wdi(
+    country_codes: Optional[str] = None,
+    start_year: int = 2010,
+    end_year: int = 2024
+):
+    parsed_country_codes = None
+    if country_codes:
+        parsed_country_codes = [
+            country_code.strip()
+            for country_code in country_codes.split(",")
+            if country_code.strip()
+        ]
+
+    scrape_output = wb.scrape_world_bank_wdi(
+        country_codes=parsed_country_codes,
+        start_year=start_year,
+        end_year=end_year
+    )
+
+    api_response = JSONResponse(
+        {
+            "status": "ok",
+            "output": scrape_output
         }
     )
 
@@ -120,7 +160,7 @@ def retrieve_chunks_api(
 
 @app.get(path="/generate_ic_review_report", status_code=200)
 def generate_ic_review_report_api(
-    transaction_id: str = "TXN_HELIOS_001",
+    transaction_id: str,
     use_llm_summary: bool = True,
     write_audit: bool = True
 ):

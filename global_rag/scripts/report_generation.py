@@ -1,8 +1,6 @@
 # File_name: report_generation.py
 # Purpose: Generate a SOW-driven AI first-line IC review pack for investment submissions.
 
-# This is NOT a generic market research report generator.
-
 # The script:
 # 1. Uses retrieve_chunks.py for staged evidence retrieval
 # 2. Builds SOW-aligned review modules
@@ -122,9 +120,9 @@ def make_run_id(transaction_id):
     return f"RPT_{transaction_id}_{digest}"
 
 
-def get_config_pack():
+def get_config_pack(client_data):
     config_base = config.config_base()
-    config_paths = config.config_paths()
+    config_paths = config.config_paths(client_data=client_data)
 
     draft_report_dir = Path(config_paths["draft_report_dir"])
     draft_report_dir.mkdir(parents=True, exist_ok=True)
@@ -260,16 +258,20 @@ def classify_evidence_type(result):
     corpus_pack = normalize_text(result.get("corpus_pack"))
 
     if corpus_zone == "client_data":
-        if document_id == "DOC_000016" or "synthetic_project_helios_financial_assumptions" in source_reference:
+        if (
+            "financial" in source_reference
+            or "assumption" in source_reference
+            or section_heading.startswith("table:")
+        ):
             return "client_workbook_control"
 
-        if document_id == "DOC_000014":
+        if "memorandum" in source_reference or "memo" in source_reference:
             return "client_memo"
 
-        if document_id == "DOC_000008" or section_heading.startswith("slide_"):
+        if "deck" in source_reference or section_heading.startswith("slide_"):
             return "client_deck"
 
-        if document_id == "DOC_000001" or section_heading.startswith("page_"):
+        if section_heading.startswith("page_"):
             return "client_pdf"
 
         if "docx_table" in source_reference or section_heading == "docx_document_text":
@@ -709,6 +711,11 @@ def load_review_config():
 # ---------------------------------------------------------------------
 
 def get_retrieval_plan(transaction_id):
+    client_scope = {
+        "corpus_zone": "client_data",
+        "corpus_pack": transaction_id,
+    }
+
     return {
         "profile": [
             {
@@ -716,7 +723,7 @@ def get_retrieval_plan(transaction_id):
                     f"{transaction_id} transaction overview asset geography technology ownership stage "
                     "solar BESS contracted revenue merchant revenue project cost equity IRR COD"
                 ),
-                "corpus_zone": "client_data",
+                **client_scope,
                 "top_k": 15,
                 "mode": "hybrid",
                 "max_chunk_chars": 8000,
@@ -729,7 +736,7 @@ def get_retrieval_plan(transaction_id):
                     "conditions precedent final investment approval metric reconciliation merchant price "
                     "offtaker credit combined downside BESS augmentation permit cyber decommissioning"
                 ),
-                "corpus_zone": "client_data",
+                **client_scope,
                 "top_k": 20,
                 "mode": "hybrid",
                 "max_chunk_chars": 10000,
@@ -739,9 +746,9 @@ def get_retrieval_plan(transaction_id):
             {
                 "query": (
                     "strategy fit growth priorities geography technology portfolio concentration "
-                    "capital allocation control rights Thailand solar storage BESS contracted revenue"
+                    "capital allocation control rights renewable energy storage contracted revenue"
                 ),
-                "corpus_zone": "client_data",
+                **client_scope,
                 "top_k": 15,
                 "mode": "hybrid",
                 "max_chunk_chars": 8000,
@@ -754,7 +761,7 @@ def get_retrieval_plan(transaction_id):
                     "counterparty credit downside protection risk allocation merchant price curves business case "
                     "seller assumptions IRR bridge accounting impact book values follow up actions"
                 ),
-                "corpus_zone": None,
+                "corpus_zone": "corpus_data",
                 "top_k": 15,
                 "mode": "hybrid",
                 "max_chunk_chars": 8000,
@@ -766,7 +773,7 @@ def get_retrieval_plan(transaction_id):
                     "principal risks mitigants risk rating merchant exposure grid cost schedule BESS degradation "
                     "offtaker credit land permits cybersecurity decommissioning curtailment construction technology risk"
                 ),
-                "corpus_zone": "client_data",
+                **client_scope,
                 "top_k": 20,
                 "mode": "hybrid",
                 "max_chunk_chars": 10000,
@@ -778,7 +785,7 @@ def get_retrieval_plan(transaction_id):
                     "main financial metrics returns project cost project IRR equity IRR NPV minimum DSCR "
                     "EV EBITDA debt total cost year one revenue metrics differ deck memo workbook"
                 ),
-                "corpus_zone": "client_data",
+                **client_scope,
                 "top_k": 20,
                 "mode": "hybrid",
                 "max_chunk_chars": 12000,
@@ -790,7 +797,7 @@ def get_retrieval_plan(transaction_id):
                     "sensitivity results downside cases merchant price generation capex COD delay FX depreciation "
                     "combined downside BESS degradation augmentation equity IRR minimum DSCR included in submission"
                 ),
-                "corpus_zone": "client_data",
+                **client_scope,
                 "top_k": 20,
                 "mode": "hybrid",
                 "max_chunk_chars": 12000,
@@ -802,7 +809,7 @@ def get_retrieval_plan(transaction_id):
                     "market offtake revenue assumptions contracted share merchant share PPA price "
                     "merchant price BESS revenue payment security offtaker credit merchant curve revenue projection EBITDA"
                 ),
-                "corpus_zone": "client_data",
+                **client_scope,
                 "top_k": 20,
                 "mode": "hybrid",
                 "max_chunk_chars": 12000,
@@ -814,7 +821,7 @@ def get_retrieval_plan(transaction_id):
                     "valuation assumptions NPV EV EBITDA enterprise value first full year EBITDA "
                     "discount rate cost per MW BESS equipment grid interconnection overhead contingency benchmark"
                 ),
-                "corpus_zone": "client_data",
+                **client_scope,
                 "top_k": 20,
                 "mode": "hybrid",
                 "max_chunk_chars": 12000,
@@ -851,7 +858,7 @@ def get_retrieval_plan(transaction_id):
                     "merchant price offtaker credit combined downside BESS augmentation grid overhead advisory "
                     "land permit cyber decommissioning actions"
                 ),
-                "corpus_zone": "client_data",
+                **client_scope,
                 "top_k": 20,
                 "mode": "hybrid",
                 "max_chunk_chars": 10000,
@@ -863,7 +870,7 @@ def get_retrieval_plan(transaction_id):
                     "previous request missing data accommodated prior IC request follow up action "
                     "previously requested included in current memo not accommodated"
                 ),
-                "corpus_zone": None,
+                **client_scope,
                 "top_k": 15,
                 "mode": "hybrid",
                 "max_chunk_chars": 8000,
@@ -875,7 +882,7 @@ def get_retrieval_plan(transaction_id):
                     "comparable prior investments historical deal comparison similarities differences "
                     "prior renewable investments platform solar storage wind BESS geography stage"
                 ),
-                "corpus_zone": None,
+                "corpus_zone": "corpus_data",
                 "top_k": 15,
                 "mode": "hybrid",
                 "max_chunk_chars": 8000,
@@ -884,10 +891,10 @@ def get_retrieval_plan(transaction_id):
         "macro_context": [
             {
                 "query": (
-                    "Thailand macroeconomic data FX projections exchange rate GDP growth inflation "
+                    "macroeconomic data FX projections exchange rate GDP growth inflation "
                     "renewable energy market country risk"
                 ),
-                "corpus_zone": None,
+                "corpus_zone": "corpus_data",
                 "top_k": 15,
                 "mode": "hybrid",
                 "max_chunk_chars": 8000,
@@ -1489,17 +1496,12 @@ def metric_source_allowed(result, metric):
     source_label = infer_source_label(result)
     section_heading = normalize_text(result.get("section_heading"))
     source_reference = normalize_text(result.get("source_reference"))
-    document_id = clean_text(result.get("document_id"))
-
     if source_label not in ["workbook", "memo", "deck", "pdf_deck"]:
         return False
 
     if metric["metric_key"] == "total_project_cost_usd_mn":
         if "project costs" in section_heading and "summary" not in section_heading:
             return False
-
-    if document_id not in ["DOC_000016", "DOC_000014", "DOC_000008", "DOC_000001"]:
-        return False
 
     allowed_names = metric.get("allow_table_names", [])
 
@@ -3107,11 +3109,11 @@ def save_report_outputs(config_pack, report, markdown_report):
 # ---------------------------------------------------------------------
 
 def generate_investment_ic_review_report(
-    transaction_id="TXN_HELIOS_001",
+    transaction_id,
     use_llm_summary=True,
     write_audit=True,
 ):
-    config_pack = get_config_pack()
+    config_pack = get_config_pack(client_data=transaction_id)
     config_base = config_pack["config_base"]
 
     run_id = make_run_id(transaction_id)
@@ -3261,7 +3263,7 @@ def generate_investment_ic_review_report(
 
 if __name__ == "__main__":
     output = generate_investment_ic_review_report(
-        transaction_id="TXN_HELIOS_001",
+        transaction_id="TXN_ADDC_001",
         use_llm_summary=True,
         write_audit=True,
     )

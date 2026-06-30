@@ -191,8 +191,12 @@ def check_chunks_table(engine):
         )
 
 
-def chunk_documents():
+def chunk_documents(rebuild_inventory: str = "Y"):
     config_base = config.config_base()
+    rebuild_inventory = rebuild_inventory.strip().upper()
+
+    if rebuild_inventory not in ["Y", "N"]:
+        raise ValueError("rebuild_inventory must be 'Y' or 'N'.")
 
     engine = create_engine(
         url=config_base["db_url"],
@@ -205,11 +209,21 @@ def chunk_documents():
 
     check_chunks_table(engine)
 
+    new_documents_filter = ""
+    if rebuild_inventory == "N":
+        new_documents_filter = """
+          AND NOT EXISTS (
+              SELECT 1
+              FROM chunks c
+              WHERE c.document_id = d.document_id
+          )
+        """
+
     # ---------------------------------------------------------------------
     # 1. Read narrative extracted text.
     # ---------------------------------------------------------------------
     # Only documents marked index_in_rag = TRUE are chunked as normal text.
-    text_sql = """
+    text_sql = f"""
         SELECT
             et.extracted_text_id,
             et.document_id,
@@ -225,6 +239,7 @@ def chunk_documents():
         WHERE d.index_in_rag = TRUE
           AND et.text_content IS NOT NULL
           AND LENGTH(TRIM(et.text_content)) > 0
+          {new_documents_filter}
         ORDER BY
             et.document_id,
             et.page_no NULLS LAST,
@@ -238,7 +253,7 @@ def chunk_documents():
     # ---------------------------------------------------------------------
     # CSV / Excel files may not be directly indexed in RAG, but their rows
     # may still contain analytical evidence. So table rows use extraction_required.
-    table_sql = """
+    table_sql = f"""
         SELECT
             tr.table_id,
             tr.document_id,
@@ -256,6 +271,7 @@ def chunk_documents():
         JOIN documents d
             ON d.document_id = tr.document_id
         WHERE d.extraction_required = TRUE
+          {new_documents_filter}
         ORDER BY
             tr.document_id,
             tr.table_id,
@@ -490,8 +506,9 @@ def chunk_documents():
     # 5. Load chunks into existing chunks table.
     # ---------------------------------------------------------------------
     with engine.begin() as conn:
-        # Full refresh for POC simplicity.
-        conn.execute(text("DELETE FROM chunks;"))
+        if rebuild_inventory == "Y":
+            # Full refresh for POC simplicity.
+            conn.execute(text("DELETE FROM chunks;"))
 
         if len(chunk_rows) > 0:
             insert_sql = text("""
@@ -546,6 +563,7 @@ def chunk_documents():
 
     return {
         "message": "Document chunking completed.",
+        "mode": "rebuild" if rebuild_inventory == "Y" else "update",
         "output_table": "chunks",
         "chunk_size_tokens": chunk_size_tokens,
         "chunk_overlap_tokens": chunk_overlap_tokens,
@@ -561,4 +579,4 @@ def chunk_documents():
 
 
 if __name__ == "__main__":
-    print(chunk_documents())
+    print(chunk_documents(rebuild_inventory="Y"))

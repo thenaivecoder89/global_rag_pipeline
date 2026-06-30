@@ -12,14 +12,19 @@
 import pandas as pd
 import hashlib
 from datetime import datetime
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 
 # Import paths and settings from the config file
 from global_rag.scripts import config
 
-def build_document_inventory(client_data: str):
+
+def build_document_inventory(client_data: str, rebuild_inventory: str = "Y"):
     config_settings = config.config_paths(client_data=client_data)
     config_base = config.config_base()
+    rebuild_inventory = rebuild_inventory.strip().upper()
+
+    if rebuild_inventory not in ["Y", "N"]:
+        raise ValueError("rebuild_inventory must be 'Y' or 'N'.")
     
     # Establish DB connection
     engine = create_engine(
@@ -31,7 +36,7 @@ def build_document_inventory(client_data: str):
     # We only scan corpus and client_data
     # not output and scripts since these do not contain evidence data
     folders_to_scan = [
-        config_settings["client_data_dir"],
+        config_settings["active_client_data_dir"],
         config_settings["corpus_dir"]
     ]
 
@@ -65,9 +70,41 @@ def build_document_inventory(client_data: str):
         "notes", # Captures manual observations
     ]
 
+    inventory_table_name = "build_document_inventory"
+    table_exists = inspect(engine).has_table(inventory_table_name)
+    existing_relative_paths = set()
+    max_document_number = 0
+
+    if rebuild_inventory == "N" and table_exists:
+        existing_inventory_df = pd.read_sql(
+            text(f"""
+                SELECT
+                    document_id,
+                    relative_path
+                FROM {inventory_table_name}
+            """),
+            engine
+        )
+
+        existing_relative_paths = set(
+            existing_inventory_df["relative_path"].dropna().astype(str).tolist()
+        )
+
+        with engine.begin() as conn:
+            max_document_number = conn.execute(
+                text(f"""
+                    SELECT COALESCE(
+                        MAX(CAST(REPLACE(document_id, 'DOC_', '') AS INTEGER)),
+                        0
+                    ) AS max_document_number
+                    FROM {inventory_table_name}
+                    WHERE document_id LIKE 'DOC_%'
+                """)
+            ).scalar()
+
     # Scan files and build inventory for RAG
     inventory_rows = []
-    document_counter = 1
+    document_counter = int(max_document_number) + 1
 
     for scan_root in folders_to_scan:
 
@@ -102,9 +139,9 @@ def build_document_inventory(client_data: str):
             supported_file_type = "Yes" if file_ext in config_settings["supported_file_types"] else "No"
 
             # Section A: Classify source group - tells us whether the document is a client evidence or methodology/ context corpus
-            if config_settings["client_data_dir"] in file_path.parents:
+            if config_settings["active_client_data_dir"] in file_path.parents:
                 source_group = "client_data"
-                relative_to_group = file_path.relative_to(config_settings["client_data_dir"])
+                relative_to_group = file_path.relative_to(config_settings["active_client_data_dir"])
             elif config_settings["corpus_dir"] in file_path.parents:
                 source_group = "corpus_data"
                 relative_to_group = file_path.relative_to(config_settings["corpus_dir"])
@@ -113,7 +150,9 @@ def build_document_inventory(client_data: str):
                 relative_to_group = file_path.relative_to(config_settings["project_root"])
 
             # Section B: Identify corpus/ client data pack
-            if len(relative_to_group.parts) > 1:
+            if source_group == "client_data":
+                corpus_pack = client_data
+            elif len(relative_to_group.parts) > 1:
                 corpus_pack = relative_to_group.parts[0]
             else:
                 corpus_pack = source_group
@@ -196,7 +235,7 @@ def build_document_inventory(client_data: str):
             )
 
     # Write inventory to DB
-    inventory_df = pd.DataFrame(inventory_rows)
+    inventory_df = pd.DataFrame(inventory_rows, columns=inventory_columns)
     inventory_df = inventory_df[inventory_columns]
     inventory_df.index.name = "SNo."
     columns_to_insert  = [
@@ -216,19 +255,39 @@ def build_document_inventory(client_data: str):
         "ingest_status",
         "notes"
     ]
+
+    scanned_files_count = len(inventory_df)
+
+    if rebuild_inventory == "N":
+        inventory_df = inventory_df[
+            ~inventory_df["relative_path"].isin(existing_relative_paths)
+        ].copy()
+
+        inventory_df["document_id"] = [
+            f"DOC_{document_number:06d}"
+            for document_number in range(
+                int(max_document_number) + 1,
+                int(max_document_number) + 1 + len(inventory_df)
+            )
+        ]
+
+    rows_written_count = len(inventory_df)
+
     with engine.begin() as conn:
         inventory_df[columns_to_insert].to_sql(
-            name="build_document_inventory",
+            name=inventory_table_name,
             con=conn,
             index=False,
             method="multi",
-            if_exists="replace"
+            if_exists="replace" if rebuild_inventory == "Y" else "append"
         )
 
     if __name__ == "__main__":
         # Print basic summary
         print(f"Document inventory successfully loaded.")
-        print(f"Total files inventories: {len(inventory_rows)}")
+        print(f"Inventory mode: {'rebuild' if rebuild_inventory == 'Y' else 'update'}")
+        print(f"Total files scanned: {scanned_files_count}")
+        print(f"Total files written: {rows_written_count}")
         # Count files by source group
         source_group_counts = {}
 
@@ -265,9 +324,16 @@ def build_document_inventory(client_data: str):
             print("\nNo unsupported files found.")
 
     # Return confirmation values
-    out_string = f"Document inventory successfully loaded."
-    return out_string
+    return {
+        "message": "Document inventory successfully loaded.",
+        "client_data": client_data,
+        "mode": "rebuild" if rebuild_inventory == "Y" else "update",
+        "scanned_files": scanned_files_count,
+        "existing_files_skipped": scanned_files_count - rows_written_count,
+        "rows_written": rows_written_count,
+        "output_table": inventory_table_name,
+    }
 
 if __name__ == "__main__":
     print("Executing the build program")
-    build_document_inventory()
+    print(build_document_inventory(client_data="TXN_ADDC_001", rebuild_inventory="Y"))
