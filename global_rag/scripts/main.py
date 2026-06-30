@@ -6,6 +6,7 @@ import global_rag.scripts.embed_chunks as emb
 import global_rag.scripts.retrieve_chunks as ret
 import global_rag.scripts.report_generation as rg
 import global_rag.scripts.wb_scraper as wb
+import global_rag.scripts.country_macro_llm_call as cmllm
 
 from typing import Optional
 from fastapi import FastAPI
@@ -175,6 +176,33 @@ def generate_ic_review_report_api(
             {
                 "status": "ok",
                 "output": report_generation_output
+            }
+        )
+    )
+
+    return api_response
+
+@app.get(path="/country_macro_llm_call", status_code=200)
+def country_macro_llm_call_api(
+    n_clusters: int = 4,
+    schema: str = "public",
+    table_name: str = "country_features_raw",
+    focus_country: str = "UAE",
+    include_graphs_in_llm: bool = True
+):
+    country_macro_llm_output = cmllm.llm_call(
+        n_clusters=n_clusters,
+        schema=schema,
+        table_name=table_name,
+        focus_country=focus_country,
+        include_graphs_in_llm=include_graphs_in_llm
+    )
+
+    api_response = JSONResponse(
+        content=jsonable_encoder(
+            {
+                "status": "ok",
+                "output": country_macro_llm_output
             }
         )
     )
