@@ -105,11 +105,14 @@ def build_document_inventory(client_data: str, rebuild_inventory: str = "Y"):
     # Scan files and build inventory for RAG
     inventory_rows = []
     document_counter = int(max_document_number) + 1
+    scan_folders = [str(scan_root) for scan_root in folders_to_scan]
+    missing_folders = []
 
     for scan_root in folders_to_scan:
 
         # Skip if folder does not exist
         if not scan_root.exists():
+            missing_folders.append(str(scan_root))
             print(f"WARNING: Folder does not exist and will be skipped: {scan_root}")
             continue
 
@@ -272,6 +275,14 @@ def build_document_inventory(client_data: str, rebuild_inventory: str = "Y"):
         ]
 
     rows_written_count = len(inventory_df)
+    source_group_counts = {}
+    pack_counts = {}
+
+    for row in inventory_rows:
+        source_group = row["source_group"]
+        corpus_pack = row["corpus_pack"]
+        source_group_counts[source_group] = source_group_counts.get(source_group, 0) + 1
+        pack_counts[corpus_pack] = pack_counts.get(corpus_pack, 0) + 1
 
     with engine.begin() as conn:
         inventory_df[columns_to_insert].to_sql(
@@ -288,23 +299,9 @@ def build_document_inventory(client_data: str, rebuild_inventory: str = "Y"):
         print(f"Inventory mode: {'rebuild' if rebuild_inventory == 'Y' else 'update'}")
         print(f"Total files scanned: {scanned_files_count}")
         print(f"Total files written: {rows_written_count}")
-        # Count files by source group
-        source_group_counts = {}
-
-        for row in inventory_rows:
-            source_group = row["source_group"]
-            source_group_counts[source_group] = source_group_counts.get(source_group, 0) + 1
-
         print("\nFiles by source group:")
         for source_group, count in source_group_counts.items():
             print(f"- {source_group}: {count}")
-
-        # Count files by corpus/client pack
-        pack_counts = {}
-
-        for row in inventory_rows:
-            corpus_pack = row["corpus_pack"]
-            pack_counts[corpus_pack] = pack_counts.get(corpus_pack, 0) + 1
 
         print("\nFiles by corpus/client pack:")
         for corpus_pack, count in pack_counts.items():
@@ -328,7 +325,13 @@ def build_document_inventory(client_data: str, rebuild_inventory: str = "Y"):
         "message": "Document inventory successfully loaded.",
         "client_data": client_data,
         "mode": "rebuild" if rebuild_inventory == "Y" else "update",
+        "project_root": str(config_settings["project_root"]),
+        "active_client_data_dir": str(config_settings["active_client_data_dir"]),
+        "scan_folders": scan_folders,
+        "missing_folders": missing_folders,
         "scanned_files": scanned_files_count,
+        "source_group_counts": source_group_counts,
+        "pack_counts": pack_counts,
         "existing_files_skipped": scanned_files_count - rows_written_count,
         "rows_written": rows_written_count,
         "output_table": inventory_table_name,
