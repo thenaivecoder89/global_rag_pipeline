@@ -114,15 +114,16 @@ def embed_chunks(rebuild_inventory: str = "Y"):
 
     check_chunks_ready(engine)
 
-    # Keep this small to avoid OpenAI TPM limits and Railway upstream timeout.
-    batch_size = 10
+    # Per OpenAI API request. Keep this below the per-run cap to reduce
+    # rate-limit risk and make partial progress if a later batch is throttled.
+    batch_size = 100
 
     # Each API call to /embed_chunks will process only this many batches.
     # Re-run the endpoint until remaining_chunks_without_embedding = 0.
-    max_batches_per_run = 5
+    max_batches_per_run = 10
 
     # Small pause between successful batches.
-    sleep_seconds_between_batches = 4
+    sleep_seconds_between_batches = 6
 
     limit_chunks = batch_size * max_batches_per_run
 
@@ -202,6 +203,8 @@ def embed_chunks(rebuild_inventory: str = "Y"):
                 "mode": "rebuild" if rebuild_inventory == "Y" else "update",
                 "embedding_model": embedding_model,
                 "embedding_dimension": embedding_dimension,
+                "chunks_per_openai_request": batch_size,
+                "max_chunks_per_endpoint_run": limit_chunks,
                 "remaining_chunks_before_run": remaining_before,
                 "chunks_selected_this_run": int(chunks_selected_this_run),
                 "chunks_embedded_this_run": int(chunks_embedded),
@@ -250,8 +253,9 @@ def embed_chunks(rebuild_inventory: str = "Y"):
         "updated_table": "chunks",
         "embedding_model": embedding_model,
         "embedding_dimension": embedding_dimension,
-        "batch_size": batch_size,
+        "chunks_per_openai_request": batch_size,
         "max_batches_per_run": max_batches_per_run,
+        "max_chunks_per_endpoint_run": limit_chunks,
         "remaining_chunks_before_run": remaining_before,
         "chunks_selected_this_run": int(chunks_selected_this_run),
         "chunks_embedded_this_run": int(chunks_embedded),
