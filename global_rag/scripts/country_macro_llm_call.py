@@ -5,8 +5,6 @@ Purpose:
 - Imports and runs country_macro_clustering.run_country_macro_clustering().
 - Sends the generated clustering JSON + base64 graph images to the configured OpenAI LLM.
 - Returns the LLM narrative as JSON plus the original base64 graph images for front-end display.
-
-No FastAPI code is included here. Import llm_call() from your API layer.
 """
 
 from __future__ import annotations
@@ -207,6 +205,7 @@ Write for a client-facing investment, strategy, and due-diligence audience.
 Connect macro-risk signals to tariff design, FX assumptions, offtake structure, EPC/O&M risk, financing, contingency, grid risk, permitting, import exposure, and downside-case modelling.
 Maintain a specific UAE focus while still explaining implications by broader country segment / region.
 Return only JSON matching the requested schema.
+Keep all narrative fields concise. Avoid long paragraphs; prefer 2-4 sentences per field.
 """.strip()
 
 
@@ -222,7 +221,8 @@ def _get_openai_client_and_model() -> tuple[OpenAI, str]:
     if not model:
         raise RuntimeError("llm_model is missing from config.config_base().")
 
-    return OpenAI(api_key=api_key), model
+    # Timeout gives the LLM enough time for the larger structured JSON response.
+    return OpenAI(api_key=api_key, timeout=180.0), model
 
 
 def _normalise_base64_image(graph_payload: Any) -> Optional[str]:
@@ -312,6 +312,28 @@ def _build_llm_input(
     ]
 
 
+def _extract_response_text(response: Any) -> str:
+    """Return response.output_text only when the OpenAI response completed cleanly."""
+    status = getattr(response, "status", None)
+    incomplete_details = getattr(response, "incomplete_details", None)
+
+    if status == "incomplete":
+        raise RuntimeError(
+            "OpenAI response was incomplete before valid JSON was produced. "
+            f"Incomplete details: {incomplete_details}. "
+            "Increase max_output_tokens or reduce the requested narrative length."
+        )
+
+    output_text = getattr(response, "output_text", None)
+    if not output_text:
+        raise RuntimeError(
+            "OpenAI response did not contain output_text. "
+            f"Response status: {status}. Response object: {response}"
+        )
+
+    return output_text
+
+
 def _parse_llm_json(output_text: str) -> Dict[str, Any]:
     """Convert model output text into a Python dictionary."""
     try:
@@ -333,6 +355,7 @@ def llm_call(
     table_name: str = "country_features_raw",
     focus_country: str = "UAE",
     include_graphs_in_llm: bool = True,
+    max_output_tokens: int = 16000,
 ) -> Dict[str, Any]:
     """
     Run clustering, send clustering outputs to the LLM, and return JSON narrative + graphs.
@@ -379,11 +402,12 @@ def llm_call(
                 "strict": True,
             }
         },
-        max_output_tokens=6000,
+        max_output_tokens=max_output_tokens,
     )
 
     # 3. Convert LLM output into JSON.
-    llm_output = _parse_llm_json(response.output_text)
+    response_text = _extract_response_text(response)
+    llm_output = _parse_llm_json(response_text)
 
     # 4. Return LLM JSON + graph images for further processing / front-end display.
     return {
@@ -395,6 +419,7 @@ def llm_call(
             "n_clusters": n_clusters,
             "source_table": f"{schema}.{table_name}",
             "graphs_sent_to_llm": include_graphs_in_llm,
+            "max_output_tokens": max_output_tokens,
             "graphs_returned": list(graph_images.keys()),
             "clustering_metadata": clustering_result.get("metadata", {}),
         },
