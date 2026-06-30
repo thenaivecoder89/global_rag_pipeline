@@ -37,7 +37,7 @@ import global_rag.scripts.retrieve_chunks as ret
 # Constants
 # ---------------------------------------------------------------------
 
-REPORT_GENERATION_VERSION = "report_generation_poc_v3"
+REPORT_GENERATION_VERSION = "report_generation_stage2_asset_overlay_v1"
 REPORT_TYPE = "ai_first_line_ic_review"
 CLASSIFICATION = "Confidential External"
 
@@ -220,6 +220,24 @@ def short_evidence_text(results, terms, max_chars=600):
     return ""
 
 
+def split_evidence_by_terms(results, positive_terms, weak_terms):
+    positive_matches = []
+    weak_matches = []
+
+    for item in results:
+        chunk_text = clean_text(item.get("chunk_text"))
+
+        if not has_any(chunk_text, positive_terms):
+            continue
+
+        if weak_terms and has_any(chunk_text, weak_terms):
+            weak_matches.append(item)
+        else:
+            positive_matches.append(item)
+
+    return positive_matches, weak_matches
+
+
 def dedupe_results(results):
     seen_signatures = set()
     deduped = []
@@ -258,13 +276,6 @@ def classify_evidence_type(result):
     corpus_pack = normalize_text(result.get("corpus_pack"))
 
     if corpus_zone == "client_data":
-        if (
-            "financial" in source_reference
-            or "assumption" in source_reference
-            or section_heading.startswith("table:")
-        ):
-            return "client_workbook_control"
-
         if "memorandum" in source_reference or "memo" in source_reference:
             return "client_memo"
 
@@ -276,6 +287,12 @@ def classify_evidence_type(result):
 
         if "docx_table" in source_reference or section_heading == "docx_document_text":
             return "client_supporting_note"
+
+        if "financial" in source_reference or "assumption" in source_reference:
+            return "client_workbook_control"
+
+        if section_heading.startswith("table:"):
+            return "client_table_evidence"
 
         return "client_evidence"
 
@@ -308,6 +325,8 @@ def infer_source_label(result):
         return "pdf_deck"
     if evidence_type == "client_supporting_note":
         return "client_supporting_note"
+    if evidence_type == "client_table_evidence":
+        return "client_table_evidence"
 
     return "unknown"
 
@@ -316,7 +335,87 @@ def infer_source_label(result):
 # Evidence selection scoring
 # ---------------------------------------------------------------------
 
-def score_result_for_module(result, module_key):
+def get_default_module_boost_terms(transaction_profile=None):
+    transaction_profile = transaction_profile or {}
+    asset_class = normalize_text(transaction_profile.get("asset_class"))
+    revenue_model = normalize_text(transaction_profile.get("revenue_model"))
+    profile_terms = get_profile_terms(transaction_profile).split() if transaction_profile else []
+
+    terms = {
+        "risk_review": [
+            "risk",
+            "rating",
+            "mitigation",
+            "grid cost",
+            "offtaker credit",
+            "cybersecurity",
+            "legal",
+            "permit",
+        ] + profile_terms,
+        "conditions_open_items": [
+            "conditions",
+            "final documentation",
+            "metric reconciliation",
+            "offtaker-credit",
+            "decommissioning",
+            "open items",
+        ] + profile_terms,
+        "financial_reconciliation": [
+            "project irr",
+            "equity irr",
+            "npv",
+            "minimum dscr",
+            "ev / ebitda",
+            "total project cost",
+            "total capex",
+            "metrics differ",
+        ],
+        "sensitivity_review": [
+            "sensitivity",
+            "combined downside",
+            "equity irr",
+            "minimum dscr",
+            "included_in_submission",
+            "capex",
+            "cod delay",
+            "availability",
+        ] + profile_terms,
+        "market_offtake_revenue": [
+            "revenue",
+            "offtake",
+            "payment security",
+            "counterparty",
+            "tariff",
+            "capacity payment",
+        ] + profile_terms,
+        "external_cost_benchmark": [
+            "overnight capital cost",
+            "grid connection cost",
+            "fixed operating expenses",
+            "technology cost benchmark",
+        ] + profile_terms,
+    }
+
+    if asset_class in ["solar_pv", "onshore_wind", "offshore_wind"]:
+        terms["market_offtake_revenue"].extend(["ppa", "cfd", "merchant", "power price"])
+        terms["sensitivity_review"].extend(["generation", "resource"])
+
+    if asset_class == "bess":
+        terms["market_offtake_revenue"].extend(["tolling", "ancillary services", "capacity", "shifting"])
+        terms["sensitivity_review"].extend(["augmentation", "degradation", "cycling"])
+
+    if asset_class == "hydrogen":
+        terms["market_offtake_revenue"].extend(["hydrogen offtake", "ammonia", "lcoh", "take-or-pay"])
+        terms["sensitivity_review"].extend(["utilisation", "electricity price", "electrolyser"])
+
+    if asset_class == "regulated_grid_distribution" or "regulated" in revenue_model:
+        terms["market_offtake_revenue"].extend(["regulated return", "tariff", "allowed revenue", "rab"])
+        terms["risk_review"].extend(["regulatory", "allowed return", "grid modernisation"])
+
+    return terms
+
+
+def score_result_for_module(result, module_key, review_config=None):
     score = 0.0
 
     similarity_score = result.get("similarity_score")
@@ -365,62 +464,14 @@ def score_result_for_module(result, module_key):
     if token_count < 80 and not section_heading.startswith("table:"):
         score -= 3.0
 
-    module_boost_terms = {
-        "risk_review": [
-            "risk",
-            "rating",
-            "mitigation",
-            "merchant exposure",
-            "grid cost",
-            "bess degradation",
-            "offtaker credit",
-            "cybersecurity",
-        ],
-        "conditions_open_items": [
-            "conditions",
-            "approve progression",
-            "final documentation",
-            "metric reconciliation",
-            "merchant-price",
-            "offtaker-credit",
-            "decommissioning",
-        ],
-        "financial_reconciliation": [
-            "project irr",
-            "equity irr",
-            "npv",
-            "minimum dscr",
-            "ev / ebitda",
-            "total project cost",
-            "metrics differ",
-        ],
-        "sensitivity_review": [
-            "sensitivity",
-            "combined downside",
-            "bess degradation",
-            "augmentation",
-            "equity irr",
-            "minimum dscr",
-            "included_in_submission",
-        ],
-        "market_offtake_revenue": [
-            "contracted share",
-            "merchant share",
-            "ppa price",
-            "merchant price",
-            "bess revenue",
-            "payment security",
-            "offtaker",
-        ],
-        "external_cost_benchmark": [
-            "utility-scale pv-plus-battery",
-            "utility-scale battery storage",
-            "solar - utility pv",
-            "overnight capital cost",
-            "grid connection cost",
-            "fixed operating expenses",
-        ],
-    }
+    review_config = review_config or {}
+    module_boost_terms = review_config.get("module_boost_terms") or get_default_module_boost_terms()
+    if module_key == "risk_review":
+        module_boost_terms = dict(module_boost_terms)
+        module_boost_terms["risk_review"] = (
+            module_boost_terms.get("risk_review", [])
+            + get_risk_taxonomy_terms(review_config)
+        )
 
     for term in module_boost_terms.get(module_key, []):
         if term in chunk_text:
@@ -429,7 +480,7 @@ def score_result_for_module(result, module_key):
     return score
 
 
-def select_evidence(results, module_key, top_n=10):
+def select_evidence(results, module_key, top_n=10, review_config=None):
     results = dedupe_results(results)
 
     scored_results = []
@@ -437,7 +488,7 @@ def select_evidence(results, module_key, top_n=10):
     for item in results:
         scored_results.append(
             {
-                "score": score_result_for_module(item, module_key),
+                "score": score_result_for_module(item, module_key, review_config),
                 "item": item,
             }
         )
@@ -455,7 +506,388 @@ def select_evidence(results, module_key, top_n=10):
 # Config objects
 # ---------------------------------------------------------------------
 
-def load_review_config():
+def merge_config_lists(*configs):
+    merged = {}
+
+    for config_item in configs:
+        if not config_item:
+            continue
+
+        for key, value in config_item.items():
+            if isinstance(value, list):
+                merged.setdefault(key, [])
+                merged[key].extend(value)
+            elif isinstance(value, dict):
+                merged.setdefault(key, {})
+                merged[key].update(value)
+            else:
+                merged[key] = value
+
+    return merged
+
+
+def get_profile_terms(transaction_profile):
+    asset_class = normalize_text(transaction_profile.get("asset_class"))
+    revenue_model = normalize_text(transaction_profile.get("revenue_model"))
+    energy_value_chain = normalize_text(transaction_profile.get("energy_value_chain"))
+    technology_subtypes = " ".join(transaction_profile.get("technology_subtypes", []))
+
+    return clean_text(
+        f"{asset_class} {revenue_model} {energy_value_chain} {technology_subtypes}"
+    )
+
+
+def get_risk_taxonomy_terms(review_config):
+    terms = []
+    for risk_item in review_config.get("asset_class_risk_taxonomy", []):
+        terms.extend(risk_item.get("terms", []))
+        terms.append(risk_item.get("risk", ""))
+    return [term for term in terms if clean_text(term)]
+
+
+def get_asset_class_risk_overlay_library(transaction_profile):
+    asset_class = normalize_text(transaction_profile.get("asset_class"))
+    libraries = {
+        "solar_pv": [
+            {
+                "risk_id": "SOLAR_CURTAILMENT",
+                "risk": "Solar curtailment and grid dispatch risk",
+                "asset_class": "solar_pv",
+                "terms": ["curtailment", "dispatch", "grid constraint", "export limit", "congestion"],
+                "reviewer_challenge": "Has curtailment risk been adequately stress-tested?",
+            },
+            {
+                "risk_id": "SOLAR_RESOURCE_DEGRADATION",
+                "risk": "Solar resource, degradation and availability",
+                "asset_class": "solar_pv",
+                "terms": ["irradiation", "p50", "p90", "degradation", "availability", "module warranty"],
+                "reviewer_challenge": "Are irradiation, degradation and availability assumptions supported by independent technical evidence?",
+            },
+            {
+                "risk_id": "SOLAR_EPC_MODULE_SUPPLY",
+                "risk": "EPC, module supply and equipment warranty",
+                "asset_class": "solar_pv",
+                "terms": ["epc", "module", "inverter", "supplier", "warranty", "liquidated damages"],
+                "reviewer_challenge": "Are module, inverter and EPC obligations bankable and reflected in contingency assumptions?",
+            },
+        ],
+        "onshore_wind": [
+            {
+                "risk_id": "ONSHORE_WIND_RESOURCE",
+                "risk": "Wind resource and production uncertainty",
+                "asset_class": "onshore_wind",
+                "terms": ["wind resource", "p50", "p90", "wake loss", "energy yield", "turbine availability"],
+                "reviewer_challenge": "Has wind resource uncertainty and wake loss been adequately stress-tested?",
+            },
+            {
+                "risk_id": "ONSHORE_WIND_TURBINE_OEM",
+                "risk": "Turbine OEM, warranty and availability",
+                "asset_class": "onshore_wind",
+                "terms": ["turbine", "oem", "availability warranty", "blade", "gearbox", "service agreement"],
+                "reviewer_challenge": "Are turbine OEM warranties, service obligations and availability assumptions sufficient for the return case?",
+            },
+            {
+                "risk_id": "ONSHORE_WIND_PERMIT_COMMUNITY",
+                "risk": "Permitting, land access and community risk",
+                "asset_class": "onshore_wind",
+                "terms": ["permit", "land lease", "community", "noise", "setback", "environmental approval"],
+                "reviewer_challenge": "Are land, community and permitting dependencies closed or reflected in schedule contingency?",
+            },
+        ],
+        "offshore_wind": [
+            {
+                "risk_id": "OFFSHORE_CONSTRUCTION_INSTALLATION",
+                "risk": "Offshore construction and marine installation",
+                "asset_class": "offshore_wind",
+                "terms": ["offshore construction", "marine installation", "vessel", "foundation", "weather window"],
+                "reviewer_challenge": "Is offshore construction risk sufficiently reflected in contingency assumptions?",
+            },
+            {
+                "risk_id": "OFFSHORE_GRID_EXPORT",
+                "risk": "Export cable, grid connection and offshore transmission",
+                "asset_class": "offshore_wind",
+                "terms": ["export cable", "offshore substation", "grid connection", "transmission", "interarray cable"],
+                "reviewer_challenge": "Are export cable and grid interface risks allocated and supported by credible schedule assumptions?",
+            },
+            {
+                "risk_id": "OFFSHORE_SEABED_CONSENT",
+                "risk": "Seabed, consenting and environmental interfaces",
+                "asset_class": "offshore_wind",
+                "terms": ["seabed", "consent", "marine permit", "environmental impact", "lease"],
+                "reviewer_challenge": "Are seabed, consent and environmental interfaces sufficiently advanced for the approval stage?",
+            },
+        ],
+        "bess": [
+            {
+                "risk_id": "BESS_DEGRADATION_AUGMENTATION",
+                "risk": "Battery degradation and augmentation",
+                "asset_class": "bess",
+                "terms": ["degradation", "augmentation", "cycle", "state of health", "warranty"],
+                "reviewer_challenge": "Are degradation, augmentation and warranty assumptions reflected in the downside case?",
+            },
+            {
+                "risk_id": "BESS_REVENUE_STACK",
+                "risk": "Storage revenue stack and dispatch assumptions",
+                "asset_class": "bess",
+                "terms": ["ancillary services", "capacity", "arbitrage", "dispatch", "tolling"],
+                "reviewer_challenge": "Is the storage revenue stack supported by contracted revenue or independently validated market assumptions?",
+            },
+            {
+                "risk_id": "BESS_SAFETY_INTERCONNECTION",
+                "risk": "Battery safety, fire protection and interconnection",
+                "asset_class": "bess",
+                "terms": ["fire", "safety", "thermal runaway", "interconnection", "ems", "scada"],
+                "reviewer_challenge": "Are fire safety, EMS / SCADA and interconnection risks adequately mitigated?",
+            },
+        ],
+        "hydrogen": [
+            {
+                "risk_id": "HYDROGEN_OFFTAKE_FIRMNESS",
+                "risk": "Hydrogen offtake firmness and utilisation",
+                "asset_class": "hydrogen",
+                "terms": ["hydrogen offtake", "take-or-pay", "utilisation", "customer", "ammonia offtake"],
+                "reviewer_challenge": "Has hydrogen offtake firmness been reconciled with electrolyser utilisation assumptions?",
+            },
+            {
+                "risk_id": "HYDROGEN_POWER_COST",
+                "risk": "Power supply, electricity price and LCOH",
+                "asset_class": "hydrogen",
+                "terms": ["electricity price", "power supply", "lcoh", "renewable power", "ppa"],
+                "reviewer_challenge": "Are power price, renewable supply and LCOH assumptions robust under downside cases?",
+            },
+            {
+                "risk_id": "HYDROGEN_TECH_EXECUTION",
+                "risk": "Electrolyser technology, construction and ramp-up",
+                "asset_class": "hydrogen",
+                "terms": ["electrolyser", "electrolyzer", "ramp-up", "availability", "stack replacement"],
+                "reviewer_challenge": "Are electrolyser availability, stack replacement and ramp-up risks reflected in contingency and returns?",
+            },
+        ],
+    }
+    return {"asset_class_risk_taxonomy": libraries.get(asset_class, [])}
+
+
+def get_legal_risk_overlay_library(transaction_profile):
+    return {
+        "asset_class_risk_taxonomy": [
+            {
+                "risk_id": "R08_LEGAL_TRANSACTION",
+                "risk": "Legal transaction risk",
+                "asset_class": "cross_asset",
+                "terms": ["title", "change of control", "consent", "permit", "license", "material contracts", "sanctions", "aml"],
+                "reviewer_challenge": "Are title, transfer consents, permits, contracts, sanctions and AML diligence complete?",
+            },
+            {
+                "risk_id": "LEGAL_CONTRACT_ENFORCEABILITY",
+                "risk": "Contract enforceability and termination rights",
+                "asset_class": "cross_asset",
+                "terms": ["termination", "default", "force majeure", "step-in", "assignment", "governing law"],
+                "reviewer_challenge": "Are termination, default, assignment and step-in rights acceptable for the proposed investment structure?",
+            },
+        ]
+    }
+
+
+def get_blind_spot_overlay_library(transaction_profile):
+    return {
+        "asset_class_risk_taxonomy": [
+            {
+                "risk_id": "R09_BLIND_SPOT_RECONCILIATION",
+                "risk": "Past-transaction blind spots",
+                "asset_class": "cross_asset",
+                "terms": ["inconsistent", "reconcile", "terminal value", "contingency", "cod", "benchmark", "missing"],
+                "reviewer_challenge": "Have common IC blind spots such as unreconciled values, optimistic COD and weak contingency been challenged?",
+            },
+            {
+                "risk_id": "BLIND_SPOT_MODEL_PACK_CONFLICT",
+                "risk": "Model, memo and deck inconsistency",
+                "asset_class": "cross_asset",
+                "terms": ["metrics differ", "different values", "model", "deck", "memo", "reconciliation"],
+                "reviewer_challenge": "Have all material model, memo and deck conflicts been reconciled before approval?",
+            },
+        ],
+        "common_ic_questions": [
+            {
+                "question_id": "ICQ_BLIND_SPOT_CONTINGENCY",
+                "theme": "Contingency and optimism bias",
+                "question": "Has contingency been benchmarked against execution risk rather than set as a balancing item?",
+                "coverage_terms": ["contingency", "benchmark", "cost overrun", "overrun"],
+                "weak_terms": ["not quantified", "not benchmarked", "not included"],
+            },
+        ],
+    }
+
+
+def get_market_geography_overlay_library(transaction_profile):
+    geography = normalize_text(transaction_profile.get("geography"))
+    terms = ["country risk", "fx", "inflation", "interest rate", "regulation", "tax", "political risk"]
+    if geography not in ["not_identified", ""]:
+        terms.append(geography)
+    return {
+        "asset_class_risk_taxonomy": [
+            {
+                "risk_id": "GEO_MARKET_MACRO",
+                "risk": "Geography, market and macro risk",
+                "asset_class": "cross_asset",
+                "terms": terms,
+                "reviewer_challenge": "Are country, FX, inflation, tax and regulatory risks reflected in valuation and downside assumptions?",
+            }
+        ],
+        "common_ic_questions": [
+            {
+                "question_id": "ICQ_GEO_MARKET",
+                "theme": "Market and geography risk",
+                "question": "Do the downside cases reflect market, country, FX, inflation and regulatory risks for the transaction geography?",
+                "coverage_terms": terms,
+                "weak_terms": ["not assessed", "not included", "not modelled", "pending"],
+            }
+        ],
+    }
+
+
+def get_revenue_model_overlay_library(transaction_profile):
+    revenue_model = normalize_text(transaction_profile.get("revenue_model"))
+    overlays = {
+        "merchant": {
+            "asset_class_risk_taxonomy": [
+                {
+                    "risk_id": "REV_MERCHANT_PRICE",
+                    "risk": "Merchant price exposure",
+                    "asset_class": "revenue_model",
+                    "terms": ["merchant", "merchant price", "price curve", "capture price"],
+                    "reviewer_challenge": "Is merchant price exposure supported by independent curves and downside capture-price cases?",
+                }
+            ]
+        },
+        "ppa": {
+            "asset_class_risk_taxonomy": [
+                {
+                    "risk_id": "REV_PPA_COUNTERPARTY",
+                    "risk": "PPA counterparty and contract terms",
+                    "asset_class": "revenue_model",
+                    "terms": ["ppa", "offtaker", "termination", "credit", "payment security"],
+                    "reviewer_challenge": "Are PPA counterparty credit, termination rights and payment security adequate?",
+                }
+            ]
+        },
+        "regulated_return": {
+            "asset_class_risk_taxonomy": [
+                {
+                    "risk_id": "REV_REGULATED_RETURN",
+                    "risk": "Regulated return and tariff reset",
+                    "asset_class": "revenue_model",
+                    "terms": ["regulated return", "tariff", "allowed revenue", "rab", "reset"],
+                    "reviewer_challenge": "Are tariff reset, allowed return and regulatory true-up assumptions adequately supported?",
+                }
+            ]
+        },
+        "regulated_grid_distribution": {
+            "asset_class_risk_taxonomy": [
+                {
+                    "risk_id": "REV_GRID_DISTRIBUTION_TARIFF",
+                    "risk": "Distribution tariff and allowed revenue",
+                    "asset_class": "revenue_model",
+                    "terms": ["distribution tariff", "allowed revenue", "regulated asset base", "network capex"],
+                    "reviewer_challenge": "Is the distribution tariff framework reconciled with grid modernisation capex and allowed revenue assumptions?",
+                }
+            ]
+        },
+        "hydrogen_offtake": {
+            "asset_class_risk_taxonomy": [
+                {
+                    "risk_id": "REV_HYDROGEN_OFFTAKE",
+                    "risk": "Hydrogen offtake and customer credit",
+                    "asset_class": "revenue_model",
+                    "terms": ["hydrogen offtake", "customer", "take-or-pay", "credit", "ammonia"],
+                    "reviewer_challenge": "Is hydrogen offtake firmness, tenor and customer credit sufficient for the utilisation case?",
+                }
+            ]
+        },
+    }
+    return overlays.get(revenue_model, {})
+
+
+def get_sensitivity_overlay_library(transaction_profile):
+    asset_class = normalize_text(transaction_profile.get("asset_class"))
+    themes = {
+        "solar_pv": {
+            "required": ["Irradiation - P90", "Generation -5%", "Curtailment downside"],
+            "recommended": ["Module degradation"],
+            "optional": [],
+        },
+        "onshore_wind": {
+            "required": ["Wind resource P90", "Wake loss downside", "Turbine availability downside"],
+            "recommended": ["COD delay 6 months"],
+            "optional": [],
+        },
+        "offshore_wind": {
+            "required": ["Offshore construction delay", "Vessel/weather downtime", "Capex +15%"],
+            "recommended": ["Export cable failure"],
+            "optional": [],
+        },
+        "bess": {
+            "required": ["BESS degradation / augmentation", "Cycling downside", "Availability downside"],
+            "recommended": ["Ancillary services price downside"],
+            "optional": [],
+        },
+        "hydrogen": {
+            "required": ["Electrolyser utilisation downside", "Electricity price upside", "Hydrogen offtake volume downside"],
+            "recommended": ["LCOH downside"],
+            "optional": [],
+        },
+        "regulated_grid_distribution": {
+            "required": ["Allowed revenue reduction", "Tariff reset downside", "Network capex overrun"],
+            "recommended": ["Regulatory delay"],
+            "optional": [],
+        },
+    }
+    tiered_themes = themes.get(asset_class, {"required": [], "recommended": [], "optional": []})
+    return {
+        "sensitivity_theme_library": (
+            tiered_themes.get("required", [])
+            + tiered_themes.get("recommended", [])
+            + tiered_themes.get("optional", [])
+        ),
+        "sensitivity_theme_tiers": tiered_themes,
+    }
+
+
+def get_benchmark_overlay_library(transaction_profile):
+    return {
+        "benchmark_term_library": get_asset_benchmark_terms(transaction_profile),
+        "benchmark_whitelist": [
+            {
+                "source_name": "Asset-class benchmark overlay",
+                "allowed_use": "Use only where retrieved benchmark evidence matches the inferred asset class and metric category.",
+            }
+        ],
+    }
+
+
+def dedupe_config_list(config_items, key_name):
+    output = []
+    seen = set()
+    for item in config_items:
+        item_key = item.get(key_name) if isinstance(item, dict) else None
+        if item_key and item_key in seen:
+            continue
+        if item_key:
+            seen.add(item_key)
+        output.append(item)
+    return output
+
+
+def finalize_review_config(config_pack):
+    config_pack["asset_class_risk_taxonomy"] = dedupe_config_list(config_pack.get("asset_class_risk_taxonomy", []), "risk_id")
+    config_pack["common_ic_questions"] = dedupe_config_list(config_pack.get("common_ic_questions", []), "question_id")
+    config_pack["benchmark_whitelist"] = dedupe_config_list(config_pack.get("benchmark_whitelist", []), "source_name")
+    return config_pack
+
+
+def load_review_config(transaction_profile=None):
+    transaction_profile = transaction_profile or {}
+    profile_terms = get_profile_terms(transaction_profile)
+
     completeness_checklist = [
         {
             "item_id": "C01_APPROVAL_REQUEST",
@@ -471,14 +903,14 @@ def load_review_config():
         },
         {
             "item_id": "C03_REVENUE_OFFTAKE",
-            "required_item": "Revenue, offtake and merchant exposure assumptions",
-            "evidence_terms": ["contracted share", "merchant share", "ppa price", "merchant price", "bess revenue"],
+            "required_item": "Revenue model, offtake and market assumptions",
+            "evidence_terms": ["revenue", "offtake", "ppa", "merchant", "cfd", "tolling", "capacity payment", "regulated", "hydrogen offtake"],
             "weak_terms": ["not appended", "under negotiation", "no independent", "referenced but not included"],
         },
         {
             "item_id": "C04_SENSITIVITY_ANALYSIS",
             "required_item": "Sensitivity analysis and downside cases",
-            "evidence_terms": ["sensitivity", "merchant price -15", "generation -5", "capex +10", "combined downside"],
+            "evidence_terms": ["sensitivity", "downside", "capex", "cod delay", "combined downside", "price downside", "availability", "utilisation"],
             "weak_terms": ["not shown", "not included", "absent from submitted documents"],
         },
         {
@@ -488,9 +920,9 @@ def load_review_config():
             "weak_terms": ["not assessed", "under negotiation", "absent", "not modelled"],
         },
         {
-            "item_id": "C06_MERCHANT_CURVE_SUPPORT",
-            "required_item": "Independent merchant-price curve support",
-            "evidence_terms": ["merchant curve", "merchant-price", "merchant price"],
+            "item_id": "C06_MARKET_PRICE_SUPPORT",
+            "required_item": "Independent market price / revenue assumption support",
+            "evidence_terms": ["price curve", "market price", "price forecast", "independent price", "revenue assumption"],
             "weak_terms": ["not appended", "not included", "missing", "independent curve absent"],
         },
         {
@@ -519,8 +951,8 @@ def load_review_config():
         },
         {
             "item_id": "C11_DECOMMISSIONING",
-            "required_item": "Decommissioning and battery-disposal reserve",
-            "evidence_terms": ["decommissioning", "battery-disposal", "battery disposal"],
+            "required_item": "Decommissioning / end-of-life reserve",
+            "evidence_terms": ["decommissioning", "end-of-life", "disposal", "dismantling", "restoration"],
             "weak_terms": ["not assessed", "no funded", "no reserve"],
         },
         {
@@ -540,16 +972,16 @@ def load_review_config():
     strategy_criteria = [
         {
             "criterion_id": "S01_ENERGY_SCOPE",
-            "criterion": "Investment is within energy-sector / renewable generation scope",
+            "criterion": "Investment is within configured energy-sector scope",
             "configured": True,
-            "positive_terms": ["solar", "pv", "bess", "storage", "renewable"],
+            "positive_terms": ["energy", "power", "renewable", "solar", "wind", "storage", "battery", "bess", "hydrogen"] + profile_terms.split(),
             "negative_terms": [],
         },
         {
             "criterion_id": "S02_TECHNOLOGY_SCOPE",
             "criterion": "Technology matches target technologies",
             "configured": True,
-            "positive_terms": ["solar", "pv", "bess", "storage"],
+            "positive_terms": ["solar", "pv", "wind", "offshore", "onshore", "bess", "battery", "storage", "hydrogen", "electrolyser"] + profile_terms.split(),
             "negative_terms": [],
         },
         {
@@ -585,9 +1017,9 @@ def load_review_config():
     common_ic_questions = [
         {
             "question_id": "ICQ01",
-            "theme": "Merchant exposure",
-            "question": "Is the 30% merchant exposure supported by an independent merchant-price curve and downside confidence range?",
-            "coverage_terms": ["merchant exposure", "merchant curve", "merchant price"],
+            "theme": "Revenue basis",
+            "question": "Is the revenue basis supported by executed contracts, regulation, market evidence or independently validated assumptions?",
+            "coverage_terms": ["revenue", "offtake", "ppa", "merchant", "cfd", "tolling", "capacity payment", "regulated"],
             "weak_terms": ["not appended", "independent curve absent", "not included", "missing"],
         },
         {
@@ -600,15 +1032,15 @@ def load_review_config():
         {
             "question_id": "ICQ03",
             "theme": "Downside protection",
-            "question": "Has the downside case combined merchant price, generation, capex, COD delay and FX sensitivities?",
-            "coverage_terms": ["combined downside", "sensitivity", "merchant price", "generation", "capex", "cod delay", "fx"],
+            "question": "Has the downside case combined the most material project risks rather than isolated one-factor sensitivities?",
+            "coverage_terms": ["combined downside", "sensitivity", "price", "generation", "availability", "capex", "cod delay", "fx"],
             "weak_terms": ["not included", "not shown", "absent"],
         },
         {
             "question_id": "ICQ04",
-            "theme": "BESS augmentation",
-            "question": "Is BESS degradation / augmentation cost explicitly modelled and supported by warranty / supplier evidence?",
-            "coverage_terms": ["bess degradation", "augmentation", "warranty"],
+            "theme": "Technology performance",
+            "question": "Are asset performance assumptions explicitly modelled and supported by technical or warranty evidence?",
+            "coverage_terms": ["degradation", "availability", "warranty", "resource", "utilisation", "performance"],
             "weak_terms": ["not separately modelled", "not included", "not shown", "term sheet"],
         },
         {
@@ -637,52 +1069,66 @@ def load_review_config():
     asset_class_risk_taxonomy = [
         {
             "risk_id": "R01_MERCHANT_EXPOSURE",
-            "risk": "Merchant price exposure",
-            "asset_class": "Solar / BESS",
-            "terms": ["merchant price exposure", "merchant exposure", "merchant price", "merchant curve"],
-            "reviewer_challenge": "Has merchant revenue been supported by an independent price curve and downside confidence range?",
+            "risk": "Revenue model support",
+            "asset_class": transaction_profile.get("asset_class", "dynamic"),
+            "terms": ["revenue", "merchant", "price", "offtake", "ppa", "cfd", "tolling", "capacity payment", "regulated"],
+            "reviewer_challenge": "Is revenue supported by appropriate contract, regulation or independent market evidence?",
         },
         {
             "risk_id": "R02_GRID_COST_SCHEDULE",
             "risk": "Grid cost and schedule",
-            "asset_class": "Solar / BESS",
+            "asset_class": transaction_profile.get("asset_class", "dynamic"),
             "terms": ["grid cost and schedule", "grid cost", "grid interconnection", "grid connection", "utility design"],
             "reviewer_challenge": "Is the grid interconnection scope, cost and schedule confirmed by the utility?",
         },
         {
-            "risk_id": "R03_BESS_DEGRADATION",
-            "risk": "BESS degradation / augmentation",
-            "asset_class": "BESS",
-            "terms": ["bess degradation", "battery augmentation", "bess augmentation", "warranty"],
-            "reviewer_challenge": "Is augmentation capex separately modelled and backed by warranty / supplier support?",
+            "risk_id": "R03_TECHNICAL_PERFORMANCE",
+            "risk": "Technical performance and availability",
+            "asset_class": transaction_profile.get("asset_class", "dynamic"),
+            "terms": ["performance", "availability", "degradation", "resource", "utilisation", "warranty"],
+            "reviewer_challenge": "Are technical performance assumptions independently supported and stress-tested?",
         },
         {
             "risk_id": "R04_OFFTAKER_CREDIT",
             "risk": "Offtaker credit and payment security",
-            "asset_class": "Renewables",
+            "asset_class": transaction_profile.get("asset_class", "dynamic"),
             "terms": ["offtaker credit", "offtaker", "payment security", "letter of credit", "counterparty"],
             "reviewer_challenge": "Has offtaker creditworthiness and payment security been independently verified?",
         },
         {
             "risk_id": "R05_LAND_PERMITTING",
             "risk": "Land, easements and permits",
-            "asset_class": "Renewables",
+            "asset_class": transaction_profile.get("asset_class", "dynamic"),
             "terms": ["land and permits", "land", "easement", "permit", "permitting"],
             "reviewer_challenge": "Are all land rights, easements and construction permits fully closed before approval?",
         },
         {
             "risk_id": "R06_CYBERSECURITY",
             "risk": "Cybersecurity / EMS / SCADA",
-            "asset_class": "Solar / BESS",
+            "asset_class": transaction_profile.get("asset_class", "dynamic"),
             "terms": ["cybersecurity", "cyber", "ems", "scada"],
             "reviewer_challenge": "Has a dedicated EMS / SCADA cybersecurity assessment been completed?",
         },
         {
             "risk_id": "R07_DECOMMISSIONING",
-            "risk": "Decommissioning and battery disposal",
-            "asset_class": "Solar / BESS",
-            "terms": ["decommissioning", "battery-disposal", "battery disposal"],
-            "reviewer_challenge": "Is decommissioning and battery-disposal funding included in the model?",
+            "risk": "Decommissioning and end-of-life obligations",
+            "asset_class": transaction_profile.get("asset_class", "dynamic"),
+            "terms": ["decommissioning", "end-of-life", "battery-disposal", "battery disposal", "dismantling"],
+            "reviewer_challenge": "Are end-of-life obligations and reserves reflected in the investment case?",
+        },
+        {
+            "risk_id": "R08_LEGAL_TRANSACTION",
+            "risk": "Legal transaction risk",
+            "asset_class": "cross_asset",
+            "terms": ["title", "change of control", "consent", "permit", "license", "material contracts", "sanctions", "aml"],
+            "reviewer_challenge": "Are title, transfer consents, permits, contracts, sanctions and AML diligence complete?",
+        },
+        {
+            "risk_id": "R09_BLIND_SPOT_RECONCILIATION",
+            "risk": "Past-transaction blind spots",
+            "asset_class": "cross_asset",
+            "terms": ["inconsistent", "reconcile", "terminal value", "contingency", "cod", "benchmark", "missing"],
+            "reviewer_challenge": "Have common IC blind spots such as unreconciled values, optimistic COD and weak contingency been challenged?",
         },
     ]
 
@@ -693,11 +1139,13 @@ def load_review_config():
         },
         {
             "source_name": "NREL / ATB style benchmark workbook",
-            "allowed_use": "PV, BESS, PV-plus-battery cost, grid and O&M benchmark categories",
+            "allowed_use": "Technology-specific cost, grid and O&M benchmark categories only where asset-class evidence matches the transaction profile.",
         },
     ]
 
-    return {
+    base_review_config = {
+        "transaction_profile": transaction_profile,
+        "module_boost_terms": get_default_module_boost_terms(transaction_profile),
         "completeness_checklist": completeness_checklist,
         "strategy_criteria": strategy_criteria,
         "common_ic_questions": common_ic_questions,
@@ -705,23 +1153,246 @@ def load_review_config():
         "benchmark_whitelist": benchmark_whitelist,
     }
 
+    merged_config = merge_config_lists(
+        base_review_config,
+        get_legal_risk_overlay_library(transaction_profile),
+        get_market_geography_overlay_library(transaction_profile),
+        get_blind_spot_overlay_library(transaction_profile),
+        get_asset_class_risk_overlay_library(transaction_profile),
+        get_revenue_model_overlay_library(transaction_profile),
+        get_sensitivity_overlay_library(transaction_profile),
+        get_benchmark_overlay_library(transaction_profile),
+    )
+    merged_config["module_boost_terms"] = get_default_module_boost_terms(transaction_profile)
+
+    return finalize_review_config(merged_config)
+
 
 # ---------------------------------------------------------------------
-# Retrieval plan
+# Retrieval plan and transaction profile
 # ---------------------------------------------------------------------
 
-def get_retrieval_plan(transaction_id):
+def get_profile_detection_terms():
+    return {
+        "asset_class": {
+            "solar_pv": ["solar", "pv", "photovoltaic", "module", "inverter"],
+            "onshore_wind": ["onshore wind", "wind farm", "turbine", "wake loss"],
+            "offshore_wind": ["offshore wind", "foundation", "export cable", "seabed", "marine installation"],
+            "bess": ["bess", "battery", "storage", "augmentation", "cycling", "ancillary services"],
+            "hydrogen": ["hydrogen", "electrolyser", "electrolyzer", "lcoh", "ammonia", "green hydrogen"],
+            "regulated_grid_distribution": [
+                "addc",
+                "distribution company",
+                "regulated grid",
+                "grid distribution",
+                "distribution network",
+                "grid modernisation",
+                "grid modernization",
+                "regulated asset base",
+                "allowed revenue",
+            ],
+        },
+        "energy_value_chain": {
+            "upstream": ["development", "site control", "resource assessment", "permitting", "land"],
+            "midstream": ["storage", "transmission", "grid", "pipeline", "transport", "compression"],
+            "downstream": ["offtake", "ppa", "customer", "retail", "distribution", "sale"],
+            "integrated": ["integrated", "platform", "portfolio", "generation and storage", "hybrid"],
+        },
+        "project_stage": {
+            "development": ["development", "late-stage development", "pre-fid", "permitting"],
+            "construction": ["construction", "epc", "notice to proceed", "under construction"],
+            "operating": ["operating", "operational", "commercial operation", "cod achieved"],
+            "expansion": ["expansion", "repowering", "augmentation", "phase ii"],
+            "acquisition": ["acquisition", "stake", "shares", "purchase", "seller"],
+        },
+        "ownership": {
+            "minority": ["minority", "less than 50%", "non-controlling"],
+            "majority": ["majority", "more than 50%"],
+            "control": ["control", "controlling", "reserved matters", "board control"],
+            "platform": ["platform", "portfolio company", "holdco"],
+        },
+        "revenue_model": {
+            "ppa": ["ppa", "power purchase agreement"],
+            "merchant": ["merchant", "merchant exposure", "merchant price"],
+            "hybrid_contract_merchant": ["contracted share", "merchant share", "hybrid revenue"],
+            "cfd": ["cfd", "contract for difference"],
+            "tolling": ["tolling", "tolling agreement"],
+            "capacity_payment": ["capacity payment", "capacity revenue"],
+            "regulated_return": ["regulated return", "tariff", "regulated asset base"],
+            "regulated_grid_distribution": ["allowed revenue", "regulated asset base", "distribution tariff", "regulated grid"],
+            "hydrogen_offtake": ["hydrogen offtake", "hydrogen sale", "ammonia offtake"],
+        },
+        "contract_type": {
+            "ppa": ["ppa", "power purchase agreement"],
+            "cfd": ["cfd", "contract for difference"],
+            "tolling": ["tolling"],
+            "offtake": ["offtake"],
+            "concession": ["concession"],
+            "regulated": ["regulated", "tariff"],
+            "merchant": ["merchant"],
+            "mixed": ["contracted share", "merchant share", "hybrid"],
+        },
+    }
+
+
+def infer_category(blob, category_terms, default_value="not_identified"):
+    scores = {}
+    for category, terms in category_terms.items():
+        score = 0
+        for term in terms:
+            if normalize_text(term) in blob:
+                score += 1
+        scores[category] = score
+
+    best_category = default_value
+    best_score = 0
+    for category, score in scores.items():
+        if score > best_score:
+            best_category = category
+            best_score = score
+
+    return best_category, best_score
+
+
+def infer_geography(blob):
+    country_candidates = [
+        "Australia",
+        "Cambodia",
+        "Egypt",
+        "India",
+        "Jordan",
+        "Saudi Arabia",
+        "South Africa",
+        "Thailand",
+        "United Arab Emirates",
+        "UAE",
+    ]
+
+    for country in country_candidates:
+        if normalize_text(country) in blob:
+            return country
+
+    return "not_identified"
+
+
+def infer_technology_subtypes(blob, asset_class):
+    subtype_terms = {
+        "solar_pv": ["utility-scale", "rooftop", "tracker", "fixed tilt", "bifacial"],
+        "onshore_wind": ["onshore", "turbine", "wake losses"],
+        "offshore_wind": ["fixed-bottom", "floating", "foundation", "export cable"],
+        "bess": ["lithium-ion", "standalone", "co-located", "two-hour", "four-hour"],
+        "hydrogen": ["electrolyser", "electrolyzer", "alkaline", "pem", "ammonia"],
+    }
+
+    output = []
+    for term in subtype_terms.get(asset_class, []):
+        if normalize_text(term) in blob:
+            output.append(term)
+
+    return output
+
+
+def infer_transaction_profile(transaction_id, profile_results):
+    blob = normalize_text(get_evidence_blob(profile_results))
+    detection_terms = get_profile_detection_terms()
+
+    asset_class, asset_score = infer_category(blob, detection_terms["asset_class"])
+    energy_value_chain, value_chain_score = infer_category(blob, detection_terms["energy_value_chain"])
+    project_stage, stage_score = infer_category(blob, detection_terms["project_stage"])
+    ownership, ownership_score = infer_category(blob, detection_terms["ownership"])
+    revenue_model, revenue_score = infer_category(blob, detection_terms["revenue_model"])
+    contract_type, contract_score = infer_category(blob, detection_terms["contract_type"])
+
+    detected_scores = [
+        asset_score,
+        value_chain_score,
+        stage_score,
+        ownership_score,
+        revenue_score,
+        contract_score,
+    ]
+    populated_count = len([score for score in detected_scores if score > 0])
+
+    if asset_score > 1 and populated_count >= 4:
+        classification_confidence = "high"
+    elif asset_score > 0 and populated_count >= 2:
+        classification_confidence = "medium"
+    else:
+        classification_confidence = "low"
+
+    return {
+        "transaction_id": transaction_id,
+        "energy_value_chain": energy_value_chain,
+        "asset_class": asset_class,
+        "technology_subtypes": infer_technology_subtypes(blob, asset_class),
+        "geography": infer_geography(blob),
+        "project_stage": project_stage,
+        "ownership": ownership,
+        "revenue_model": revenue_model,
+        "contract_type": contract_type,
+        "development_scope": energy_value_chain,
+        "classification_confidence": classification_confidence,
+        "source_chunks": [get_source_reference(item) for item in profile_results[:8]],
+    }
+
+
+def run_neutral_profile_retrieval(transaction_id):
+    query_config = {
+        "query": (
+            f"{transaction_id} transaction overview asset class technology project stage geography "
+            "ownership revenue model contract type offtake construction operation acquisition "
+            "solar wind offshore storage battery hydrogen regulated grid distribution grid modernisation "
+            "merchant ppa cfd tolling allowed revenue tariff"
+        ),
+        "corpus_zone": "client_data",
+        "corpus_pack": transaction_id,
+        "top_k": 20,
+        "mode": "hybrid",
+        "max_chunk_chars": 10000,
+    }
+    retrieval_output = run_single_retrieval(query_config)
+    results = retrieval_output.get("results", [])
+    selected_results = select_evidence(results, module_key="profile", top_n=12)
+
+    return {
+        "retrieval_calls": [
+            {
+                "query": query_config["query"],
+                "corpus_zone": query_config.get("corpus_zone"),
+                "corpus_pack": query_config.get("corpus_pack"),
+                "results_returned": len(results),
+                "status": "ok",
+            }
+        ],
+        "raw_results_count": len(results),
+        "selected_results": selected_results,
+        "selected_sources": [get_source_reference(item) for item in selected_results],
+        "evidence_blob": get_evidence_blob(selected_results),
+    }
+
+
+def build_retrieval_plan(transaction_profile, review_config):
+    transaction_id = transaction_profile["transaction_id"]
     client_scope = {
         "corpus_zone": "client_data",
         "corpus_pack": transaction_id,
     }
+    asset_class = clean_text(transaction_profile.get("asset_class"))
+    revenue_model = clean_text(transaction_profile.get("revenue_model"))
+    project_stage = clean_text(transaction_profile.get("project_stage"))
+    geography = clean_text(transaction_profile.get("geography"))
+    profile_context = clean_text(
+        f"{asset_class} {revenue_model} {project_stage} {geography}"
+    )
+    risk_taxonomy_terms = clean_text(" ".join(get_risk_taxonomy_terms(review_config)))
+    benchmark_terms = clean_text(" ".join(review_config.get("benchmark_term_library", [])))
 
     return {
         "profile": [
             {
                 "query": (
-                    f"{transaction_id} transaction overview asset geography technology ownership stage "
-                    "solar BESS contracted revenue merchant revenue project cost equity IRR COD"
+                    f"{transaction_id} transaction overview asset class geography technology ownership stage "
+                    "revenue model contract type project cost return metrics COD"
                 ),
                 **client_scope,
                 "top_k": 15,
@@ -732,9 +1403,9 @@ def get_retrieval_plan(transaction_id):
         "completeness_readiness": [
             {
                 "query": (
-                    "required submission components completeness readiness missing weak open items "
-                    "conditions precedent final investment approval metric reconciliation merchant price "
-                    "offtaker credit combined downside BESS augmentation permit cyber decommissioning"
+                    f"{profile_context} required submission components completeness readiness missing weak open items "
+                    "conditions precedent final investment approval metric reconciliation revenue support "
+                    "counterparty credit combined downside permits legal cyber decommissioning"
                 ),
                 **client_scope,
                 "top_k": 20,
@@ -745,8 +1416,8 @@ def get_retrieval_plan(transaction_id):
         "strategy_fit": [
             {
                 "query": (
-                    "strategy fit growth priorities geography technology portfolio concentration "
-                    "capital allocation control rights renewable energy storage contracted revenue"
+                    f"{profile_context} strategy fit growth priorities geography technology value chain "
+                    "portfolio concentration capital allocation control rights return hurdle"
                 ),
                 **client_scope,
                 "top_k": 15,
@@ -757,8 +1428,8 @@ def get_retrieval_plan(transaction_id):
         "historical_ic_questions": [
             {
                 "query": (
-                    "historical IC questions recurring IC themes merchant exposure construction technology risk "
-                    "counterparty credit downside protection risk allocation merchant price curves business case "
+                    f"{profile_context} historical IC questions recurring IC themes construction technology risk "
+                    "counterparty credit downside protection risk allocation revenue assumptions business case "
                     "seller assumptions IRR bridge accounting impact book values follow up actions"
                 ),
                 "corpus_zone": "corpus_data",
@@ -770,8 +1441,9 @@ def get_retrieval_plan(transaction_id):
         "risk_review": [
             {
                 "query": (
-                    "principal risks mitigants risk rating merchant exposure grid cost schedule BESS degradation "
-                    "offtaker credit land permits cybersecurity decommissioning curtailment construction technology risk"
+                    f"{profile_context} principal risks mitigants risk rating revenue risk grid cost schedule "
+                    "technical performance counterparty credit land permits legal cybersecurity decommissioning "
+                    f"construction technology risk {risk_taxonomy_terms}"
                 ),
                 **client_scope,
                 "top_k": 20,
@@ -782,8 +1454,8 @@ def get_retrieval_plan(transaction_id):
         "financial_reconciliation": [
             {
                 "query": (
-                    "main financial metrics returns project cost project IRR equity IRR NPV minimum DSCR "
-                    "EV EBITDA debt total cost year one revenue metrics differ deck memo workbook"
+                    f"{profile_context} main financial metrics returns project cost capex project IRR equity IRR "
+                    "NPV DSCR EBITDA LCOE LCOS LCOH availability utilisation metrics differ deck memo workbook"
                 ),
                 **client_scope,
                 "top_k": 20,
@@ -794,8 +1466,8 @@ def get_retrieval_plan(transaction_id):
         "sensitivity_review": [
             {
                 "query": (
-                    "sensitivity results downside cases merchant price generation capex COD delay FX depreciation "
-                    "combined downside BESS degradation augmentation equity IRR minimum DSCR included in submission"
+                    f"{profile_context} sensitivity results downside cases price volume generation availability "
+                    "resource capex COD delay FX inflation combined downside utilisation degradation included in submission"
                 ),
                 **client_scope,
                 "top_k": 20,
@@ -806,8 +1478,8 @@ def get_retrieval_plan(transaction_id):
         "market_offtake_revenue": [
             {
                 "query": (
-                    "market offtake revenue assumptions contracted share merchant share PPA price "
-                    "merchant price BESS revenue payment security offtaker credit merchant curve revenue projection EBITDA"
+                    f"{profile_context} market offtake revenue assumptions contract revenue merchant regulated "
+                    "PPA CfD tolling capacity payment payment security counterparty credit revenue projection EBITDA"
                 ),
                 **client_scope,
                 "top_k": 20,
@@ -818,8 +1490,8 @@ def get_retrieval_plan(transaction_id):
         "client_valuation": [
             {
                 "query": (
-                    "valuation assumptions NPV EV EBITDA enterprise value first full year EBITDA "
-                    "discount rate cost per MW BESS equipment grid interconnection overhead contingency benchmark"
+                    f"{profile_context} valuation assumptions NPV EV EBITDA enterprise value first full year EBITDA "
+                    "discount rate cost per MW capex equipment grid interconnection overhead contingency benchmark"
                 ),
                 **client_scope,
                 "top_k": 20,
@@ -830,8 +1502,8 @@ def get_retrieval_plan(transaction_id):
         "external_cost_benchmark": [
             {
                 "query": (
-                    "utility scale PV plus battery overnight capital cost grid connection cost "
-                    "fixed operating expense variable operating expense battery storage solar PV benchmark"
+                    f"{profile_context} external benchmark overnight capital cost grid connection cost "
+                    f"fixed operating expense variable operating expense technology cost benchmark {benchmark_terms}"
                 ),
                 "corpus_zone": "corpus_data",
                 "top_k": 20,
@@ -842,7 +1514,7 @@ def get_retrieval_plan(transaction_id):
         "external_ev_ebitda_benchmark": [
             {
                 "query": (
-                    "renewable energy solar storage EV EBITDA enterprise value valuation multiple "
+                    f"{profile_context} renewable energy infrastructure EV EBITDA enterprise value valuation multiple "
                     "transaction benchmark comparable transactions listed company multiples"
                 ),
                 "corpus_zone": "corpus_data",
@@ -854,9 +1526,9 @@ def get_retrieval_plan(transaction_id):
         "conditions_open_items": [
             {
                 "query": (
-                    "conditions precedent open items final investment approval metric reconciliation "
-                    "merchant price offtaker credit combined downside BESS augmentation grid overhead advisory "
-                    "land permit cyber decommissioning actions"
+                    f"{profile_context} conditions precedent open items final investment approval metric reconciliation "
+                    "revenue support counterparty credit combined downside grid overhead advisory legal land permit cyber "
+                    "decommissioning actions"
                 ),
                 **client_scope,
                 "top_k": 20,
@@ -879,8 +1551,8 @@ def get_retrieval_plan(transaction_id):
         "prior_deal_comparison": [
             {
                 "query": (
-                    "comparable prior investments historical deal comparison similarities differences "
-                    "prior renewable investments platform solar storage wind BESS geography stage"
+                    f"{profile_context} comparable prior investments historical deal comparison similarities differences "
+                    "prior energy investments platform geography stage asset class revenue model"
                 ),
                 "corpus_zone": "corpus_data",
                 "top_k": 15,
@@ -891,8 +1563,8 @@ def get_retrieval_plan(transaction_id):
         "macro_context": [
             {
                 "query": (
-                    "macroeconomic data FX projections exchange rate GDP growth inflation "
-                    "renewable energy market country risk"
+                    f"{geography} macroeconomic data FX projections exchange rate GDP growth inflation "
+                    "energy market country risk"
                 ),
                 "corpus_zone": "corpus_data",
                 "top_k": 15,
@@ -901,6 +1573,16 @@ def get_retrieval_plan(transaction_id):
             }
         ],
     }
+
+
+def get_retrieval_plan(transaction_id):
+    profile_packet = run_neutral_profile_retrieval(transaction_id)
+    transaction_profile = infer_transaction_profile(
+        transaction_id,
+        profile_packet.get("selected_results", []),
+    )
+    review_config = load_review_config(transaction_profile)
+    return build_retrieval_plan(transaction_profile, review_config)
 
 
 def run_single_retrieval(query_config):
@@ -915,11 +1597,17 @@ def run_single_retrieval(query_config):
     )
 
 
-def run_retrieval_plan(transaction_id):
-    retrieval_plan = get_retrieval_plan(transaction_id)
+def run_retrieval_plan(transaction_profile, review_config, profile_packet=None):
+    retrieval_plan = build_retrieval_plan(transaction_profile, review_config)
     evidence_packets = {}
 
+    if profile_packet is not None:
+        evidence_packets["profile"] = profile_packet
+
     for module_key, query_configs in retrieval_plan.items():
+        if module_key == "profile" and profile_packet is not None:
+            continue
+
         module_results = []
         retrieval_calls = []
 
@@ -933,6 +1621,7 @@ def run_retrieval_plan(transaction_id):
                     {
                         "query": query_config["query"],
                         "corpus_zone": query_config.get("corpus_zone"),
+                        "corpus_pack": query_config.get("corpus_pack"),
                         "results_returned": len(results),
                         "status": "ok",
                     }
@@ -943,6 +1632,7 @@ def run_retrieval_plan(transaction_id):
                     {
                         "query": query_config["query"],
                         "corpus_zone": query_config.get("corpus_zone"),
+                        "corpus_pack": query_config.get("corpus_pack"),
                         "results_returned": 0,
                         "status": "failed",
                         "error": f"{type(e).__name__}: {str(e)}",
@@ -953,6 +1643,7 @@ def run_retrieval_plan(transaction_id):
             results=module_results,
             module_key=module_key,
             top_n=12,
+            review_config=review_config,
         )
 
         evidence_packets[module_key] = {
@@ -972,41 +1663,7 @@ def run_retrieval_plan(transaction_id):
 
 def identify_transaction_profile(transaction_id, evidence_packets):
     profile_evidence = evidence_packets.get("profile", {}).get("selected_results", [])
-    blob = get_evidence_blob(profile_evidence)
-
-    technologies = []
-
-    if has_any(blob, ["solar", "pv"]):
-        technologies.append("Solar PV")
-
-    if has_any(blob, ["bess", "battery", "storage"]):
-        technologies.append("BESS")
-
-    geography = "Not identified"
-    if "thailand" in normalize_text(blob):
-        geography = "Thailand"
-
-    stage = "Not identified"
-    if has_any(blob, ["late-stage development", "development"]):
-        stage = "Development / late-stage development"
-
-    ownership = "Not identified"
-    if has_any(blob, ["80%", "80% controlling", "controlling interest", "controlling stake"]):
-        ownership = "80% controlling stake"
-
-    revenue_model = "Not identified"
-    if has_any(blob, ["70% contracted", "contracted share", "merchant share", "30% merchant"]):
-        revenue_model = "70% contracted / 30% merchant exposure"
-
-    return {
-        "transaction_id": transaction_id,
-        "technologies": technologies,
-        "geography": geography,
-        "stage": stage,
-        "ownership": ownership,
-        "revenue_model": revenue_model,
-        "source_chunks": [get_source_reference(item) for item in profile_evidence[:6]],
-    }
+    return infer_transaction_profile(transaction_id, profile_evidence)
 
 
 # ---------------------------------------------------------------------
@@ -1057,6 +1714,50 @@ def parse_table_row_cells(row_text):
     return cells
 
 
+def canonical_structured_label(label):
+    label_norm = normalize_text(label)
+    label_norm = re.sub(r"[^a-z0-9]+", "_", label_norm).strip("_")
+    mapping = {
+        "assumption_name": "assumption_name",
+        "assumption": "assumption_name",
+        "metric": "metric",
+        "metric_name": "metric",
+        "value": "value",
+        "unit": "unit",
+        "case": "case",
+        "scenario": "case",
+        "year": "year",
+        "section": "section",
+        "basis_or_commentary": "basis_or_commentary",
+        "basis": "basis_or_commentary",
+        "commentary": "basis_or_commentary",
+        "comment": "basis_or_commentary",
+    }
+    return mapping.get(label_norm)
+
+
+def extract_structured_key_value_row(row_text):
+    structured = {}
+    cells = parse_table_row_cells(row_text)
+
+    for cell in cells:
+        label = clean_text(cell.get("label"))
+        value = clean_text(cell.get("value"))
+        canonical_label = canonical_structured_label(label)
+
+        if canonical_label and value:
+            structured[canonical_label] = value
+            continue
+
+        embedded_match = re.match(r"([^:|]+):\s*(.+)$", value)
+        if embedded_match:
+            embedded_label = canonical_structured_label(embedded_match.group(1))
+            if embedded_label:
+                structured[embedded_label] = clean_text(embedded_match.group(2))
+
+    return structured
+
+
 def cell_values_from_row(row_text):
     cells = parse_table_row_cells(row_text)
     return [cell["value"] for cell in cells]
@@ -1102,11 +1803,21 @@ def run_completeness_check(review_config, evidence_packets):
 
     external_cost_blob = evidence_packets.get("external_cost_benchmark", {}).get("evidence_blob", "")
     external_ev_blob = evidence_packets.get("external_ev_ebitda_benchmark", {}).get("evidence_blob", "")
-
-    external_cost_available = has_any(
+    benchmark_terms = review_config.get("benchmark_term_library", [])
+    asset_benchmark_match = bool(benchmark_terms) and has_any(external_cost_blob, benchmark_terms)
+    generic_benchmark_match = has_any(
         external_cost_blob,
-        ["utility-scale battery storage", "utility-scale pv", "pv-plus-battery", "overnight capital cost", "grid connection cost"],
+        [
+            "overnight capital cost",
+            "grid connection cost",
+            "fixed operating expenses",
+            "variable operating expense",
+            "capex benchmark",
+            "cost benchmark",
+        ],
     )
+
+    external_cost_available = asset_benchmark_match and generic_benchmark_match
 
     external_ev_available = has_all(external_ev_blob, ["ev", "ebitda"]) and has_any(
         external_ev_blob,
@@ -1116,8 +1827,13 @@ def run_completeness_check(review_config, evidence_packets):
     rows = []
 
     for item in checklist:
-        evidence_found = has_any(blob, item["evidence_terms"])
-        weak_evidence = has_any(blob, item["weak_terms"])
+        positive_matches, weak_matches = split_evidence_by_terms(
+            results=evidence_results,
+            positive_terms=item["evidence_terms"],
+            weak_terms=item["weak_terms"],
+        )
+        evidence_found = bool(positive_matches or weak_matches)
+        weak_evidence = bool(weak_matches)
 
         if item["item_id"] == "C12_BENCHMARK_SUPPORT":
             if external_cost_available and external_ev_available:
@@ -1129,6 +1845,11 @@ def run_completeness_check(review_config, evidence_packets):
                 status = READINESS_WEAK
                 traffic_light = STATUS_AMBER
                 weakness = "External cost benchmark evidence is available, but external EV/EBITDA valuation multiple evidence is not available."
+                evidence_found = True
+            elif generic_benchmark_match and not asset_benchmark_match:
+                status = READINESS_WEAK
+                traffic_light = STATUS_AMBER
+                weakness = "Benchmark evidence was found, but it does not match the inferred asset class."
                 evidence_found = True
             elif evidence_found:
                 status = READINESS_WEAK
@@ -1152,17 +1873,12 @@ def run_completeness_check(review_config, evidence_packets):
                 traffic_light = STATUS_GREEN
                 weakness = "No obvious weakness language detected in retrieved evidence."
 
-        evidence_text = short_evidence_text(
-            results=evidence_results,
-            terms=item["evidence_terms"] + item["weak_terms"],
-            max_chars=700,
-        )
+        evidence_text = ""
+        matched_results = positive_matches + weak_matches
+        if matched_results:
+            evidence_text = clean_text(matched_results[0].get("chunk_text"))[:700]
 
-        source_chunks = find_source_chunks(
-            results=evidence_results,
-            terms=item["evidence_terms"] + item["weak_terms"],
-            max_sources=5,
-        )
+        source_chunks = [get_source_reference(result) for result in matched_results[:5]]
 
         if item["item_id"] == "C12_BENCHMARK_SUPPORT" and external_cost_available:
             external_sources = evidence_packets.get("external_cost_benchmark", {}).get("selected_sources", [])
@@ -1363,11 +2079,17 @@ def run_historical_ic_question_check(review_config, evidence_packets):
 # Financial metric extraction and reconciliation
 # ---------------------------------------------------------------------
 
-def metric_value_is_plausible(metric_key, value):
+def metric_value_is_plausible(metric_key, value, transaction_profile=None):
     if value is None:
         return False
+    transaction_profile = transaction_profile or {}
+    asset_class = normalize_text(transaction_profile.get("asset_class"))
 
-    if metric_key == "total_project_cost_usd_mn":
+    if metric_key == "total_capex":
+        if asset_class == "offshore_wind":
+            return 100 <= value <= 20000
+        if asset_class == "hydrogen":
+            return 10 <= value <= 15000
         return 100 <= value <= 2000
 
     if metric_key == "project_irr_pct":
@@ -1376,7 +2098,7 @@ def metric_value_is_plausible(metric_key, value):
     if metric_key == "equity_irr_pct":
         return 3 <= value <= 60
 
-    if metric_key == "npv_usd_mn":
+    if metric_key == "npv":
         return -1000 <= value <= 1000 and abs(value) >= 3
 
     if metric_key == "minimum_dscr_x":
@@ -1388,11 +2110,15 @@ def metric_value_is_plausible(metric_key, value):
     if metric_key == "debt_total_cost_pct":
         return 0 <= value <= 100
 
-    if metric_key == "year_one_revenue_usd_mn":
+    if metric_key == "year_one_revenue":
+        if asset_class in ["offshore_wind", "hydrogen"]:
+            return 1 <= value <= 5000
         return 1 <= value <= 1000
 
-    if metric_key == "ppa_price_usd_mwh":
-        return 10 <= value <= 250
+    if metric_key == "offtake_price":
+        if asset_class == "hydrogen":
+            return 0.1 <= value <= 10000
+        return 1 <= value <= 500
 
     if metric_key == "capacity_factor_pct":
         return 5 <= value <= 70
@@ -1400,15 +2126,15 @@ def metric_value_is_plausible(metric_key, value):
     return True
 
 
-def get_metric_definitions():
+def get_metric_definitions(transaction_profile=None):
     return [
         {
-            "metric_key": "total_project_cost_usd_mn",
-            "metric_name": "Total project cost",
-            "terms": ["total project cost"],
-            "unit": "USD mn",
+            "metric_key": "total_capex",
+            "metric_name": "Total capex / project cost",
+            "terms": ["total project cost", "total capex", "capex"],
+            "unit": None,
             "direct_patterns": [
-                r"total project cost[^0-9]{0,50}(?:usd\s*)?([0-9]+(?:\.[0-9]+)?)",
+                r"(?:total project cost|total capex|capex)[^0-9]{0,50}(?:[a-z]{3}\s*)?([0-9]+(?:\.[0-9]+)?)",
             ],
             "allow_table_names": ["summary", "assumptions", "docx_table_4"],
         },
@@ -1429,11 +2155,11 @@ def get_metric_definitions():
             "allow_table_names": ["summary", "assumptions", "docx_table_4"],
         },
         {
-            "metric_key": "npv_usd_mn",
+            "metric_key": "npv",
             "metric_name": "NPV",
             "terms": ["npv"],
-            "unit": "USD mn",
-            "direct_patterns": [r"\bnpv\b[^0-9\-]{0,50}(?:usd\s*)?([-+]?[0-9]+(?:\.[0-9]+)?)"],
+            "unit": None,
+            "direct_patterns": [r"\bnpv\b[^0-9\-]{0,50}(?:[a-z]{3}\s*)?([-+]?[0-9]+(?:\.[0-9]+)?)"],
             "allow_table_names": ["summary", "assumptions", "docx_table_4"],
         },
         {
@@ -1461,21 +2187,21 @@ def get_metric_definitions():
             "allow_table_names": ["summary", "assumptions", "docx_table_4"],
         },
         {
-            "metric_key": "year_one_revenue_usd_mn",
+            "metric_key": "year_one_revenue",
             "metric_name": "Year-one revenue",
             "terms": ["year-one revenue", "year one revenue"],
-            "unit": "USD mn",
-            "direct_patterns": [r"(?:year-one revenue|year one revenue)[^0-9]{0,50}(?:usd\s*)?([0-9]+(?:\.[0-9]+)?)"],
+            "unit": None,
+            "direct_patterns": [r"(?:year-one revenue|year one revenue)[^0-9]{0,50}(?:[a-z]{3}\s*)?([0-9]+(?:\.[0-9]+)?)"],
             "allow_table_names": ["summary", "assumptions", "docx_table_4"],
         },
         {
-            "metric_key": "ppa_price_usd_mwh",
-            "metric_name": "PPA price",
-            "terms": ["ppa price", "contracted ppa price"],
-            "unit": "USD/MWh",
+            "metric_key": "offtake_price",
+            "metric_name": "Offtake / contracted price",
+            "terms": ["ppa price", "contracted ppa price", "offtake price", "tariff", "hydrogen price"],
+            "unit": None,
             "direct_patterns": [
-                r"ppa price[^0-9]{0,50}([0-9]+(?:\.[0-9]+)?)",
-                r"usd\s*([0-9]+(?:\.[0-9]+)?)\s*/\s*mwh",
+                r"(?:ppa price|contracted ppa price|offtake price|tariff|hydrogen price)[^0-9]{0,50}([0-9]+(?:\.[0-9]+)?)",
+                r"[a-z]{3}\s*([0-9]+(?:\.[0-9]+)?)\s*/\s*(?:mwh|kg|tonne)",
             ],
             "allow_table_names": ["summary", "assumptions"],
         },
@@ -1496,10 +2222,10 @@ def metric_source_allowed(result, metric):
     source_label = infer_source_label(result)
     section_heading = normalize_text(result.get("section_heading"))
     source_reference = normalize_text(result.get("source_reference"))
-    if source_label not in ["workbook", "memo", "deck", "pdf_deck"]:
+    if source_label not in ["workbook", "memo", "deck", "pdf_deck", "client_table_evidence"]:
         return False
 
-    if metric["metric_key"] == "total_project_cost_usd_mn":
+    if metric["metric_key"] == "total_capex":
         if "project costs" in section_heading and "summary" not in section_heading:
             return False
 
@@ -1512,13 +2238,51 @@ def metric_source_allowed(result, metric):
     return True
 
 
-def extract_metric_from_table_row(row_text, metric):
+def infer_unit_from_text(text_value, default_unit=None):
+    text_norm = normalize_text(text_value)
+
+    unit_patterns = [
+        (r"\b(usd|aed|eur|gbp|aud|cad|sar|inr)\s*(mn|m|million|bn|billion)?\b", lambda m: clean_text(" ".join(part for part in m.groups() if part)).upper()),
+        (r"\b([a-z]{3})\s*/\s*(mwh|kwh|kg|tonne)\b", lambda m: f"{m.group(1).upper()}/{m.group(2)}"),
+        (r"\b%\b", lambda m: "%"),
+        (r"\bx\b", lambda m: "x"),
+    ]
+
+    for pattern, formatter in unit_patterns:
+        match = re.search(pattern, text_norm)
+        if match:
+            return formatter(match)
+
+    return default_unit
+
+
+def metric_name_matches(metric, value):
+    return has_any(value, metric["terms"])
+
+
+def extract_metric_from_table_row(row_text, metric, transaction_profile=None):
     row_lower = normalize_text(row_text)
+    structured = extract_structured_key_value_row(row_text)
+    metric_label = clean_text(
+        structured.get("metric")
+        or structured.get("assumption_name")
+        or structured.get("section")
+    )
+
+    if metric_label and metric_name_matches(metric, metric_label):
+        value = safe_float(structured.get("value"))
+        if value is not None and metric_value_is_plausible(metric["metric_key"], value, transaction_profile):
+            unit = clean_text(structured.get("unit")) or infer_unit_from_text(row_text, metric.get("unit"))
+            return {
+                "value": value,
+                "unit": unit,
+                "structured_fields": structured,
+            }
 
     if not any(term in row_lower for term in metric["terms"]):
         return None
 
-    if metric["metric_key"] == "total_project_cost_usd_mn" and "total project cost" not in row_lower:
+    if metric["metric_key"] == "total_capex" and not has_any(row_lower, ["total project cost", "total capex", "capex"]):
         return None
 
     cells = parse_table_row_cells(row_text)
@@ -1543,13 +2307,17 @@ def extract_metric_from_table_row(row_text, metric):
             candidate_values.append(number_value)
 
     for candidate in candidate_values:
-        if metric_value_is_plausible(metric["metric_key"], candidate):
-            return candidate
+        if metric_value_is_plausible(metric["metric_key"], candidate, transaction_profile):
+            return {
+                "value": candidate,
+                "unit": infer_unit_from_text(row_text, metric.get("unit")),
+                "structured_fields": structured,
+            }
 
     return None
 
 
-def extract_metric_from_direct_text(chunk_text, metric):
+def extract_metric_from_direct_text(chunk_text, metric, transaction_profile=None):
     text_value = clean_text(chunk_text)
 
     if re.search(r"Row\s+\d+:", text_value, flags=re.IGNORECASE):
@@ -1563,14 +2331,18 @@ def extract_metric_from_direct_text(chunk_text, metric):
 
         candidate = safe_float(match.group(1))
 
-        if metric_value_is_plausible(metric["metric_key"], candidate):
-            return candidate
+        if metric_value_is_plausible(metric["metric_key"], candidate, transaction_profile):
+            return {
+                "value": candidate,
+                "unit": infer_unit_from_text(text_value, metric.get("unit")),
+                "structured_fields": {},
+            }
 
     return None
 
 
-def extract_financial_metrics(evidence_results):
-    metric_definitions = get_metric_definitions()
+def extract_financial_metrics(evidence_results, transaction_profile=None):
+    metric_definitions = get_metric_definitions(transaction_profile)
     rows = []
     seen = set()
 
@@ -1578,7 +2350,7 @@ def extract_financial_metrics(evidence_results):
         chunk_text = clean_text(result.get("chunk_text"))
         source_label = infer_source_label(result)
 
-        if source_label not in ["workbook", "memo", "deck", "pdf_deck"]:
+        if source_label not in ["workbook", "memo", "deck", "pdf_deck", "client_table_evidence"]:
             continue
 
         row_texts = extract_row_texts(chunk_text)
@@ -1588,10 +2360,11 @@ def extract_financial_metrics(evidence_results):
                 continue
 
             for row_text in row_texts:
-                value = extract_metric_from_table_row(row_text, metric)
+                extracted_metric = extract_metric_from_table_row(row_text, metric, transaction_profile)
 
-                if value is None:
+                if extracted_metric is None:
                     continue
+                value = extracted_metric["value"]
 
                 signature = (metric["metric_key"], source_label, round(value, 6), result.get("chunk_id"), "table_row")
 
@@ -1605,15 +2378,17 @@ def extract_financial_metrics(evidence_results):
                     "metric_name": metric["metric_name"],
                     "source_label": source_label,
                     "value": value,
-                    "unit": metric["unit"],
+                    "unit": extracted_metric.get("unit") or metric.get("unit"),
+                    "structured_fields": extracted_metric.get("structured_fields", {}),
                     "source_chunk": get_source_reference(result),
                     "extraction_method": "table_row",
                 })
 
-            value = extract_metric_from_direct_text(chunk_text, metric)
+            extracted_metric = extract_metric_from_direct_text(chunk_text, metric, transaction_profile)
 
-            if value is None:
+            if extracted_metric is None:
                 continue
+            value = extracted_metric["value"]
 
             signature = (metric["metric_key"], source_label, round(value, 6), result.get("chunk_id"), "direct_text")
 
@@ -1627,7 +2402,8 @@ def extract_financial_metrics(evidence_results):
                 "metric_name": metric["metric_name"],
                 "source_label": source_label,
                 "value": value,
-                "unit": metric["unit"],
+                "unit": extracted_metric.get("unit") or metric.get("unit"),
+                "structured_fields": extracted_metric.get("structured_fields", {}),
                 "source_chunk": get_source_reference(result),
                 "extraction_method": "direct_text",
             })
@@ -1675,10 +2451,14 @@ def reconcile_financial_metrics(metric_rows):
                 "metric_name": row["metric_name"],
                 "unit": row["unit"],
                 "values_by_source": {},
+                "units_by_source": {},
                 "source_chunks_by_source": {},
             }
         source_label = row["source_label"]
         by_metric[metric_key]["values_by_source"].setdefault(source_label, []).append(row["value"])
+        by_metric[metric_key]["units_by_source"].setdefault(source_label, [])
+        if row.get("unit") and row.get("unit") not in by_metric[metric_key]["units_by_source"][source_label]:
+            by_metric[metric_key]["units_by_source"][source_label].append(row.get("unit"))
         by_metric[metric_key]["source_chunks_by_source"].setdefault(source_label, []).append(row["source_chunk"])
 
     reconciliation_rows = []
@@ -1698,7 +2478,7 @@ def reconcile_financial_metrics(metric_rows):
 
         preferred_value = None
         preferred_source = None
-        for source_label in ["workbook", "memo", "deck", "pdf_deck", "unknown"]:
+        for source_label in ["workbook", "client_table_evidence", "memo", "deck", "pdf_deck", "unknown"]:
             source_values = cleaned_values_by_source.get(source_label, [])
             if source_values:
                 preferred_value = source_values[0]
@@ -1724,6 +2504,7 @@ def reconcile_financial_metrics(metric_rows):
             "metric_name": item["metric_name"],
             "unit": item["unit"],
             "values_by_source": cleaned_values_by_source,
+            "units_by_source": item.get("units_by_source", {}),
             "preferred_value_for_review": preferred_value,
             "preferred_source": preferred_source,
             "traffic_light": traffic_light,
@@ -1732,17 +2513,17 @@ def reconcile_financial_metrics(metric_rows):
         })
 
     metric_order = [
-        "total_project_cost_usd_mn", "project_irr_pct", "equity_irr_pct", "npv_usd_mn",
-        "minimum_dscr_x", "ev_ebitda_x", "debt_total_cost_pct", "year_one_revenue_usd_mn",
-        "ppa_price_usd_mwh", "capacity_factor_pct",
+        "total_capex", "project_irr_pct", "equity_irr_pct", "npv",
+        "minimum_dscr_x", "ev_ebitda_x", "debt_total_cost_pct", "year_one_revenue",
+        "offtake_price", "capacity_factor_pct",
     ]
     order_map = {metric_key: index for index, metric_key in enumerate(metric_order)}
     return sorted(reconciliation_rows, key=lambda row: order_map.get(row["metric_key"], 999))
 
 
-def run_financial_reconciliation(evidence_packets):
+def run_financial_reconciliation(evidence_packets, transaction_profile=None):
     evidence_results = evidence_packets.get("financial_reconciliation", {}).get("selected_results", [])
-    metric_rows = extract_financial_metrics(evidence_results)
+    metric_rows = extract_financial_metrics(evidence_results, transaction_profile)
     reconciliation_rows = reconcile_financial_metrics(metric_rows)
 
     if any(row["traffic_light"] == STATUS_RED for row in reconciliation_rows):
@@ -1765,7 +2546,59 @@ def run_financial_reconciliation(evidence_packets):
 # Sensitivity review
 # ---------------------------------------------------------------------
 
-def get_sensitivity_scenarios():
+def get_sensitivity_scenarios(transaction_profile=None, review_config=None):
+    transaction_profile = transaction_profile or {}
+    review_config = review_config or {}
+    asset_class = normalize_text(transaction_profile.get("asset_class"))
+    revenue_model = normalize_text(transaction_profile.get("revenue_model"))
+
+    scenarios = [
+        "Base Case",
+        "Capex +10%",
+        "COD delay 6 months",
+        "FX depreciation 10%",
+        "Combined downside",
+    ]
+    scenarios.extend(review_config.get("sensitivity_theme_library", []))
+
+    if "merchant" in revenue_model:
+        scenarios.append("Merchant price -15%")
+
+    if asset_class in ["solar_pv", "onshore_wind", "offshore_wind"]:
+        scenarios.append("Generation -5%")
+
+    if asset_class in ["bess", "hydrogen"]:
+        scenarios.append("Utilisation / availability downside")
+
+    if asset_class == "bess":
+        scenarios.append("BESS degradation / augmentation")
+
+    output = []
+    seen = set()
+    for scenario in scenarios:
+        if scenario not in seen:
+            output.append(scenario)
+            seen.add(scenario)
+    return output
+
+
+def get_required_sensitivity_scenarios(transaction_profile=None, review_config=None):
+    review_config = review_config or {}
+    tiers = review_config.get("sensitivity_theme_tiers", {})
+    tier_required = tiers.get("required", [])
+    if tier_required:
+        base_required = ["Base Case", "Capex +10%", "COD delay 6 months", "FX depreciation 10%", "Combined downside"]
+        output = []
+        seen = set()
+        for scenario in base_required + tier_required:
+            if scenario not in seen:
+                output.append(scenario)
+                seen.add(scenario)
+        return output
+    return get_sensitivity_scenarios(transaction_profile, review_config)
+
+
+def get_all_known_sensitivity_scenarios():
     return [
         "Base Case",
         "Merchant price -15%",
@@ -1774,7 +2607,28 @@ def get_sensitivity_scenarios():
         "COD delay 6 months",
         "FX depreciation 10%",
         "Combined downside",
+        "Utilisation / availability downside",
         "BESS degradation / augmentation",
+        "Irradiation - P90",
+        "Capex +15%",
+        "Curtailment downside",
+        "Module degradation",
+        "Wind resource P90",
+        "Wake loss downside",
+        "Turbine availability downside",
+        "Offshore construction delay",
+        "Vessel/weather downtime",
+        "Export cable failure",
+        "Cycling downside",
+        "Ancillary services price downside",
+        "Electrolyser utilisation downside",
+        "Electricity price upside",
+        "Hydrogen offtake volume downside",
+        "LCOH downside",
+        "Allowed revenue reduction",
+        "Tariff reset downside",
+        "Network capex overrun",
+        "Regulatory delay",
     ]
 
 
@@ -1783,13 +2637,37 @@ def normalize_sensitivity_scenario(value):
     mapping = {
         "base case": "Base Case",
         "merchant price -15%": "Merchant price -15%",
+        "irradiation": "Irradiation - P90",
         "generation -5%": "Generation -5%",
         "capex +10%": "Capex +10%",
+        "capex +15%": "Capex +15%",
         "cod delay 6 months": "COD delay 6 months",
         "fx depreciation 10%": "FX depreciation 10%",
         "combined downside": "Combined downside",
+        "utilisation": "Utilisation / availability downside",
+        "utilization": "Utilisation / availability downside",
+        "availability": "Utilisation / availability downside",
         "bess degradation / augmentation": "BESS degradation / augmentation",
         "battery augmentation": "BESS degradation / augmentation",
+        "curtailment": "Curtailment downside",
+        "module degradation": "Module degradation",
+        "wind resource": "Wind resource P90",
+        "wake loss": "Wake loss downside",
+        "turbine availability": "Turbine availability downside",
+        "offshore construction": "Offshore construction delay",
+        "weather downtime": "Vessel/weather downtime",
+        "export cable": "Export cable failure",
+        "cycling": "Cycling downside",
+        "ancillary services": "Ancillary services price downside",
+        "electrolyser utilisation": "Electrolyser utilisation downside",
+        "electrolyzer utilization": "Electrolyser utilisation downside",
+        "electricity price": "Electricity price upside",
+        "hydrogen offtake volume": "Hydrogen offtake volume downside",
+        "lcoh": "LCOH downside",
+        "allowed revenue": "Allowed revenue reduction",
+        "tariff reset": "Tariff reset downside",
+        "network capex": "Network capex overrun",
+        "regulatory delay": "Regulatory delay",
     }
     for key, label in mapping.items():
         if key in value_norm:
@@ -1872,11 +2750,10 @@ def extract_sensitivity_cases(evidence_results):
         chunk_text = clean_text(result.get("chunk_text"))
         row_texts = extract_row_texts(chunk_text)
         for row_text in row_texts:
-            if not has_any(row_text, get_sensitivity_scenarios()):
+            if not has_any(row_text, get_all_known_sensitivity_scenarios()):
                 continue
             case = None
-            if "synthetic_project_helios_financial_assumptions_sensitivities" in normalize_text(result.get("section_heading")):
-                case = extract_workbook_sensitivity_case(row_text, result)
+            case = extract_workbook_sensitivity_case(row_text, result)
             if case is None:
                 case = extract_simple_sensitivity_case(row_text, result)
             if case is None:
@@ -1889,7 +2766,7 @@ def extract_sensitivity_cases(evidence_results):
     return sensitivity_cases
 
 
-def dedupe_sensitivity_cases(cases):
+def dedupe_sensitivity_cases(cases, transaction_profile=None, review_config=None):
     by_scenario = {}
     for case in cases:
         scenario = clean_text(case.get("scenario"))
@@ -1909,11 +2786,11 @@ def dedupe_sensitivity_cases(cases):
         if scenario not in by_scenario or quality_score > by_scenario[scenario]["quality_score"]:
             by_scenario[scenario] = {"quality_score": quality_score, "case": case}
     output_cases = []
-    for scenario in get_sensitivity_scenarios():
+    for scenario in get_sensitivity_scenarios(transaction_profile, review_config):
         if scenario in by_scenario:
             output_cases.append(by_scenario[scenario]["case"])
     for scenario, data in by_scenario.items():
-        if scenario not in get_sensitivity_scenarios():
+        if scenario not in get_sensitivity_scenarios(transaction_profile, review_config):
             output_cases.append(data["case"])
     return output_cases
 
@@ -1936,47 +2813,37 @@ def extract_submitted_pack_sensitivity_gaps(evidence_results):
     return gaps
 
 
-def validate_sensitivity_cases(cases):
-    expected = {
-        "Base Case": (13.9, 1.32, "Yes"),
-        "Merchant price -15%": (12.2, 1.24, "Yes"),
-        "Generation -5%": (12.6, 1.21, "Yes"),
-        "Capex +10%": (11.8, 1.30, "Yes"),
-        "COD delay 6 months": (11.9, 1.28, "Yes"),
-        "FX depreciation 10%": (12.7, 1.27, "Yes"),
-        "Combined downside": (8.5, 1.08, "No"),
-        "BESS degradation / augmentation": (12.8, 1.26, "No"),
-    }
+def validate_sensitivity_cases(cases, transaction_profile=None, review_config=None):
     failures = []
+    expected_scenarios = get_required_sensitivity_scenarios(transaction_profile, review_config)
     case_map = {case.get("scenario"): case for case in cases}
-    for scenario, expected_values in expected.items():
-        expected_equity_irr, expected_dscr, expected_flag = expected_values
+
+    for scenario in expected_scenarios:
         case = case_map.get(scenario)
         if not case:
-            failures.append(f"Missing sensitivity case: {scenario}")
+            failures.append(f"Missing sensitivity coverage theme: {scenario}")
             continue
-        actual_equity_irr = case.get("equity_irr_pct")
-        actual_dscr = case.get("minimum_dscr_x")
-        actual_flag = case.get("included_in_submission")
-        if actual_equity_irr is None or abs(float(actual_equity_irr) - expected_equity_irr) > 0.01:
-            failures.append(f"Incorrect equity IRR for {scenario}: {actual_equity_irr}")
-        if actual_dscr is None or abs(float(actual_dscr) - expected_dscr) > 0.01:
-            failures.append(f"Incorrect minimum DSCR for {scenario}: {actual_dscr}")
-        if actual_flag != expected_flag:
-            failures.append(f"Incorrect included_in_submission flag for {scenario}: {actual_flag}")
+
+        if case.get("equity_irr_pct") is None and case.get("minimum_dscr_x") is None:
+            failures.append(f"Sensitivity case has no extracted quantitative metric: {scenario}")
+
     return failures
 
 
-def run_sensitivity_review(evidence_packets):
+def run_sensitivity_review(evidence_packets, review_config=None, transaction_profile=None):
     evidence_results = evidence_packets.get("sensitivity_review", {}).get("selected_results", [])
     blob = get_evidence_blob(evidence_results)
     raw_sensitivity_cases = extract_sensitivity_cases(evidence_results)
-    sensitivity_cases = dedupe_sensitivity_cases(raw_sensitivity_cases)
+    sensitivity_cases = dedupe_sensitivity_cases(raw_sensitivity_cases, transaction_profile, review_config)
     submitted_pack_gaps = extract_submitted_pack_sensitivity_gaps(evidence_results)
-    validation_failures = validate_sensitivity_cases(sensitivity_cases)
+    validation_failures = validate_sensitivity_cases(sensitivity_cases, transaction_profile, review_config)
     combined_downside_available = any(case.get("scenario") == "Combined downside" for case in sensitivity_cases)
     bess_augmentation_available = any(case.get("scenario") == "BESS degradation / augmentation" for case in sensitivity_cases)
-    submission_gap_flag = any(case.get("scenario") in ["Combined downside", "BESS degradation / augmentation"] and case.get("included_in_submission") == "No" for case in sensitivity_cases)
+    required_scenarios = get_required_sensitivity_scenarios(transaction_profile, review_config)
+    all_scenarios = get_sensitivity_scenarios(transaction_profile, review_config)
+    recommended_scenarios = review_config.get("sensitivity_theme_tiers", {}).get("recommended", [])
+    optional_scenarios = review_config.get("sensitivity_theme_tiers", {}).get("optional", [])
+    submission_gap_flag = any(case.get("scenario") in required_scenarios and case.get("included_in_submission") == "No" for case in sensitivity_cases)
     if validation_failures:
         module_status = STATUS_RED
     elif submission_gap_flag:
@@ -1988,7 +2855,11 @@ def run_sensitivity_review(evidence_packets):
     return {
         "module": "Sensitivity and Downside Protection Review",
         "traffic_light": module_status,
-        "summary": "Sensitivity review distinguishes submitted cases from workbook-only cases and validates workbook sensitivity values.",
+        "summary": "Sensitivity review checks coverage of profile-relevant downside themes and distinguishes submitted cases from workbook-only cases.",
+        "required_scenarios": required_scenarios,
+        "recommended_scenarios": recommended_scenarios,
+        "optional_scenarios": optional_scenarios,
+        "all_profile_scenarios": all_scenarios,
         "combined_downside_available_in_evidence": combined_downside_available,
         "bess_augmentation_available_in_evidence": bess_augmentation_available,
         "submission_gap_flag": submission_gap_flag,
@@ -2010,33 +2881,33 @@ def run_market_offtake_revenue_review(evidence_packets):
     blob = get_evidence_blob(evidence_results)
 
     flags = {
-        "contracted_merchant_split_evidenced": has_any(blob, ["contracted share", "70%", "merchant share", "30%"]),
-        "merchant_curve_missing": has_any(blob, ["merchant curve source not appended", "independent merchant curve referenced but not appended", "independent merchant-price study is referenced but not included", "independent curve absent"]),
+        "contracted_revenue_evidenced": has_any(blob, ["contracted share", "contracted revenue", "contract revenue", "offtake", "tariff"]),
+        "market_price_support_missing": has_any(blob, ["price curve source not appended", "independent price curve referenced but not appended", "independent price study is referenced but not included", "independent curve absent"]),
         "offtaker_credit_missing": has_any(blob, ["no independent credit", "offtaker-credit support are missing", "offtaker credit support are missing", "independent credit review absent"]),
         "payment_security_pending": has_any(blob, ["payment-security package remains under negotiation", "payment security", "under discussion", "under negotiation", "not executed"]),
-        "ppa_price_conflict": has_any(blob, ["deck says 60", "deck ppa price", "ppa price 2029"]),
-        "bess_revenue_evidenced": has_any(blob, ["bess revenue", "ancillary services", "capacity", "shifting"]),
+        "price_conflict": has_any(blob, ["price conflict", "deck says", "different price", "price inconsistency"]),
+        "non_energy_revenue_evidenced": has_any(blob, ["ancillary services", "capacity", "shifting", "availability payment", "allowed revenue"]),
     }
 
     findings = []
 
-    if flags["contracted_merchant_split_evidenced"]:
+    if flags["contracted_revenue_evidenced"]:
         findings.append(
             {
-                "finding": "Revenue model includes contracted and merchant components.",
-                "traffic_light": STATUS_AMBER if flags["merchant_curve_missing"] else STATUS_GREEN,
-                "explanation": "Contracted / merchant split is evidenced, but merchant support must be checked.",
-                "source_chunks": find_source_chunks(evidence_results, ["contracted share", "merchant share", "70%", "30%"]),
+                "finding": "Contracted or regulated revenue basis is evidenced.",
+                "traffic_light": STATUS_AMBER if flags["market_price_support_missing"] else STATUS_GREEN,
+                "explanation": "Revenue support is evidenced, but any market-price component should be checked.",
+                "source_chunks": find_source_chunks(evidence_results, ["contracted share", "contracted revenue", "offtake", "tariff", "allowed revenue"]),
             }
         )
 
-    if flags["merchant_curve_missing"]:
+    if flags["market_price_support_missing"]:
         findings.append(
             {
-                "finding": "Independent merchant-price curve support is missing or not appended.",
+                "finding": "Independent market-price support is missing or not appended.",
                 "traffic_light": STATUS_RED,
-                "explanation": "The submission appears to rely on merchant revenue, but the independent curve is not available in the submission evidence.",
-                "source_chunks": find_source_chunks(evidence_results, ["merchant curve", "not appended", "not included", "independent curve absent"]),
+                "explanation": "The submission appears to rely on market-price revenue, but the independent curve is not available in the submission evidence.",
+                "source_chunks": find_source_chunks(evidence_results, ["price curve", "not appended", "not included", "independent curve absent"]),
             }
         )
 
@@ -2050,13 +2921,13 @@ def run_market_offtake_revenue_review(evidence_packets):
             }
         )
 
-    if flags["ppa_price_conflict"]:
+    if flags["price_conflict"]:
         findings.append(
             {
-                "finding": "PPA price inconsistency should be reconciled.",
+                "finding": "Revenue price inconsistency should be reconciled.",
                 "traffic_light": STATUS_AMBER,
-                "explanation": "Retrieved evidence indicates different PPA price references across sources.",
-                "source_chunks": find_source_chunks(evidence_results, ["PPA price", "deck says 60", "58", "60"]),
+                "explanation": "Retrieved evidence indicates different price references across sources.",
+                "source_chunks": find_source_chunks(evidence_results, ["price", "conflict", "different", "inconsistency"]),
             }
         )
 
@@ -2069,10 +2940,216 @@ def run_market_offtake_revenue_review(evidence_packets):
     return {
         "module": "Market, Offtake and Revenue Review",
         "traffic_light": module_status,
-        "summary": "Market/offtake review flags merchant curve, offtaker credit, payment security and PPA price consistency issues.",
+        "summary": "Market/offtake review flags market-price support, offtaker credit, payment security and price consistency issues.",
         "flags": flags,
         "findings": findings,
     }
+
+
+def run_revenue_rule_review(evidence_packets, module_name, review_path, rules):
+    evidence_results = evidence_packets.get("market_offtake_revenue", {}).get("selected_results", [])
+    blob = get_evidence_blob(evidence_results)
+    findings = []
+    flags = {}
+
+    for rule in rules:
+        present = has_any(blob, rule["terms"])
+        weak = has_any(blob, rule.get("weak_terms", []))
+        flags[rule["flag"]] = present
+
+        if not present and rule.get("required", False):
+            findings.append(
+                {
+                    "finding": rule["missing_finding"],
+                    "traffic_light": STATUS_RED,
+                    "explanation": rule["missing_explanation"],
+                    "source_chunks": [],
+                }
+            )
+            continue
+
+        if present:
+            findings.append(
+                {
+                    "finding": rule["finding"],
+                    "traffic_light": STATUS_AMBER if weak else rule.get("traffic_light", STATUS_GREEN),
+                    "explanation": rule["weak_explanation"] if weak else rule["explanation"],
+                    "source_chunks": find_source_chunks(evidence_results, rule["terms"] + rule.get("weak_terms", [])),
+                }
+            )
+
+    module_status = STATUS_GREEN
+    if any(item["traffic_light"] == STATUS_RED for item in findings):
+        module_status = STATUS_RED
+    elif any(item["traffic_light"] == STATUS_AMBER for item in findings):
+        module_status = STATUS_AMBER
+    elif not findings:
+        module_status = STATUS_GREY
+
+    return {
+        "module": module_name,
+        "traffic_light": module_status,
+        "summary": f"{module_name} applies revenue checks selected from the inferred transaction profile.",
+        "revenue_review_path": review_path,
+        "flags": flags,
+        "findings": findings,
+    }
+
+
+def run_power_revenue_review(evidence_packets, transaction_profile):
+    return run_revenue_rule_review(
+        evidence_packets,
+        module_name="Power Revenue Review",
+        review_path="power",
+        rules=[
+            {
+                "flag": "power_revenue_basis_evidenced",
+                "terms": ["ppa", "cfd", "merchant", "power price", "tariff", "offtake"],
+                "weak_terms": ["not appended", "not included", "not executed", "under negotiation", "no independent"],
+                "required": True,
+                "finding": "Power revenue basis is evidenced.",
+                "explanation": "Retrieved evidence includes PPA, CfD, merchant, tariff or offtake revenue support.",
+                "weak_explanation": "Power revenue basis is evidenced, but support appears incomplete or not executed.",
+                "missing_finding": "Power revenue basis is not clearly evidenced.",
+                "missing_explanation": "No PPA, CfD, merchant, tariff or offtake support was found in selected evidence.",
+            },
+            {
+                "flag": "merchant_support_evidenced",
+                "terms": ["merchant curve", "merchant price", "independent price", "price forecast"],
+                "weak_terms": ["not appended", "not included", "independent curve absent"],
+                "finding": "Merchant price support is referenced.",
+                "explanation": "Merchant price support appears in the selected evidence.",
+                "weak_explanation": "Merchant price support is referenced but may not be attached or independently supported.",
+            },
+        ],
+    )
+
+
+def run_storage_revenue_review(evidence_packets, transaction_profile):
+    return run_revenue_rule_review(
+        evidence_packets,
+        module_name="Storage Revenue Review",
+        review_path="storage",
+        rules=[
+            {
+                "flag": "storage_revenue_basis_evidenced",
+                "terms": ["tolling", "capacity", "ancillary services", "arbitrage", "shifting", "availability payment"],
+                "weak_terms": ["not executed", "under negotiation", "not included", "not modelled"],
+                "required": True,
+                "finding": "Storage revenue basis is evidenced.",
+                "explanation": "Retrieved evidence includes tolling, capacity, ancillary services, arbitrage or availability revenue.",
+                "weak_explanation": "Storage revenue is evidenced, but contract status or modelling support appears incomplete.",
+                "missing_finding": "Storage revenue basis is not clearly evidenced.",
+                "missing_explanation": "No tolling, capacity, ancillary services, arbitrage or availability support was found.",
+            },
+            {
+                "flag": "cycling_degradation_evidenced",
+                "terms": ["cycling", "degradation", "augmentation", "availability", "warranty"],
+                "weak_terms": ["not shown", "not included", "not separately modelled"],
+                "finding": "Storage operating-performance linkage is evidenced.",
+                "explanation": "Evidence links storage revenue to cycling, degradation, augmentation, availability or warranty assumptions.",
+                "weak_explanation": "Storage operating-performance linkage appears incomplete or not separately modelled.",
+            },
+        ],
+    )
+
+
+def run_hydrogen_offtake_review(evidence_packets, transaction_profile):
+    return run_revenue_rule_review(
+        evidence_packets,
+        module_name="Hydrogen Offtake Revenue Review",
+        review_path="hydrogen",
+        rules=[
+            {
+                "flag": "hydrogen_offtake_evidenced",
+                "terms": ["hydrogen offtake", "ammonia offtake", "take-or-pay", "hydrogen sale", "customer contract"],
+                "weak_terms": ["under negotiation", "not executed", "non-binding", "not included"],
+                "required": True,
+                "finding": "Hydrogen offtake basis is evidenced.",
+                "explanation": "Retrieved evidence includes hydrogen/ammonia offtake or customer contract support.",
+                "weak_explanation": "Hydrogen offtake is referenced, but execution status or binding support appears incomplete.",
+                "missing_finding": "Hydrogen offtake basis is not clearly evidenced.",
+                "missing_explanation": "No hydrogen/ammonia offtake or customer contract support was found.",
+            },
+            {
+                "flag": "lcoh_power_cost_evidenced",
+                "terms": ["lcoh", "electricity price", "power cost", "electrolyser utilisation", "electrolyzer utilisation"],
+                "weak_terms": ["not shown", "not included", "not modelled"],
+                "finding": "Hydrogen unit economics support is evidenced.",
+                "explanation": "Evidence references LCOH, electricity cost or electrolyser utilisation assumptions.",
+                "weak_explanation": "Hydrogen unit economics are referenced but support appears incomplete.",
+            },
+        ],
+    )
+
+
+def run_regulated_revenue_review(evidence_packets, transaction_profile):
+    return run_revenue_rule_review(
+        evidence_packets,
+        module_name="Regulated Revenue Review",
+        review_path="regulated",
+        rules=[
+            {
+                "flag": "regulated_revenue_evidenced",
+                "terms": ["allowed revenue", "regulated asset base", "rab", "tariff", "regulated return", "distribution tariff"],
+                "weak_terms": ["under review", "not approved", "pending", "not final"],
+                "required": True,
+                "finding": "Regulated revenue framework is evidenced.",
+                "explanation": "Retrieved evidence includes tariff, allowed revenue, RAB or regulated-return support.",
+                "weak_explanation": "Regulated revenue framework is evidenced, but approval or finality appears unresolved.",
+                "missing_finding": "Regulated revenue framework is not clearly evidenced.",
+                "missing_explanation": "No tariff, allowed revenue, RAB or regulated-return support was found.",
+            },
+            {
+                "flag": "grid_modernisation_evidenced",
+                "terms": ["grid modernisation", "grid modernization", "distribution network", "network capex", "loss reduction"],
+                "weak_terms": ["not approved", "pending", "not quantified", "under review"],
+                "finding": "Grid modernisation scope is evidenced.",
+                "explanation": "Evidence references grid modernisation, distribution network capex or loss-reduction scope.",
+                "weak_explanation": "Grid modernisation scope is referenced but approval or quantification appears incomplete.",
+            },
+        ],
+    )
+
+
+def run_generic_revenue_review(evidence_packets, transaction_profile):
+    return run_revenue_rule_review(
+        evidence_packets,
+        module_name="Revenue Model Review",
+        review_path="generic",
+        rules=[
+            {
+                "flag": "revenue_basis_evidenced",
+                "terms": ["revenue", "offtake", "contract", "tariff", "price", "customer", "payment"],
+                "weak_terms": ["under negotiation", "not executed", "not included", "no independent", "pending"],
+                "required": True,
+                "finding": "Revenue basis is evidenced.",
+                "explanation": "Retrieved evidence includes revenue, contract, tariff, customer or payment support.",
+                "weak_explanation": "Revenue basis is evidenced, but execution or support appears incomplete.",
+                "missing_finding": "Revenue basis is not clearly evidenced.",
+                "missing_explanation": "No clear revenue, contract, tariff, customer or payment support was found.",
+            },
+        ],
+    )
+
+
+def run_revenue_model_review(evidence_packets, transaction_profile):
+    asset_class = normalize_text(transaction_profile.get("asset_class"))
+    revenue_model = normalize_text(transaction_profile.get("revenue_model"))
+
+    if asset_class == "hydrogen" or "hydrogen" in revenue_model:
+        return run_hydrogen_offtake_review(evidence_packets, transaction_profile)
+
+    if asset_class == "bess" or "storage" in revenue_model or "tolling" in revenue_model:
+        return run_storage_revenue_review(evidence_packets, transaction_profile)
+
+    if asset_class == "regulated_grid_distribution" or "regulated" in revenue_model or "capacity_payment" in revenue_model:
+        return run_regulated_revenue_review(evidence_packets, transaction_profile)
+
+    if asset_class in ["solar_pv", "onshore_wind", "offshore_wind"]:
+        return run_power_revenue_review(evidence_packets, transaction_profile)
+
+    return run_generic_revenue_review(evidence_packets, transaction_profile)
 
 
 # ---------------------------------------------------------------------
@@ -2127,6 +3204,32 @@ def find_best_risk_row(risk_rows, terms):
     return None
 
 
+def find_narrative_risk_evidence(evidence_results, terms):
+    matched_results = []
+    weak_terms = [
+        "not assessed",
+        "not included",
+        "not modelled",
+        "pending",
+        "under review",
+        "under negotiation",
+        "open",
+        "missing",
+        "not quantified",
+    ]
+    weak_match = False
+
+    for result in evidence_results:
+        chunk_text = clean_text(result.get("chunk_text"))
+        if not has_any(chunk_text, terms):
+            continue
+        matched_results.append(result)
+        if has_any(chunk_text, weak_terms):
+            weak_match = True
+
+    return matched_results, weak_match
+
+
 def risk_rating_to_traffic_light(rating, mitigation_status):
     rating_lower = normalize_text(rating)
     mitigation_lower = normalize_text(mitigation_status)
@@ -2163,6 +3266,23 @@ def run_risk_review(review_config, evidence_packets):
         best_row = find_best_risk_row(risk_rows, risk_item["terms"])
 
         if not best_row:
+            narrative_results, weak_match = find_narrative_risk_evidence(evidence_results, risk_item["terms"])
+            if narrative_results:
+                rows.append(
+                    {
+                        "risk_id": risk_item["risk_id"],
+                        "risk": risk_item["risk"],
+                        "asset_class": risk_item["asset_class"],
+                        "rating": "Narrative evidence only",
+                        "mitigation_status": "Risk topic appears in selected narrative evidence, but no structured risk-table rating was found.",
+                        "reviewer_challenge": risk_item["reviewer_challenge"],
+                        "open_gap": "Request structured risk rating / mitigation status if this risk is material.",
+                        "traffic_light": STATUS_AMBER if weak_match else STATUS_GREY,
+                        "source_chunks": [get_source_reference(item) for item in narrative_results[:5]],
+                    }
+                )
+                continue
+
             rows.append(
                 {
                     "risk_id": risk_item["risk_id"],
@@ -2222,7 +3342,7 @@ def run_client_valuation_review(evidence_packets):
     blob = get_evidence_blob(evidence_results)
 
     valuation_metrics_present = has_any(blob, ["npv", "ev / ebitda", "ev ebitda", "minimum dscr", "equity irr"])
-    cost_challenge_present = has_any(blob, ["bess equipment", "grid interconnection", "overhead", "contingency", "advisory", "upper quartile", "high"])
+    cost_challenge_present = has_any(blob, ["equipment", "grid interconnection", "overhead", "contingency", "advisory", "upper quartile", "high"])
 
     findings = []
 
@@ -2251,13 +3371,13 @@ def run_client_valuation_review(evidence_packets):
                 "finding": "Project-cost challenge areas are evidenced.",
                 "traffic_light": STATUS_AMBER,
                 "explanation": (
-                    "Evidence points to BESS equipment, grid interconnection, contingency, overhead "
+                    "Evidence points to equipment, grid interconnection, contingency, overhead "
                     "or advisory items requiring challenge. These are client-side assertions unless "
                     "independently benchmarked through corpus_data."
                 ),
                 "source_chunks": find_source_chunks(
                     evidence_results,
-                    ["BESS equipment", "grid interconnection", "overhead", "contingency", "advisory", "upper quartile", "high"],
+                    ["equipment", "grid interconnection", "overhead", "contingency", "advisory", "upper quartile", "high"],
                 ),
             }
         )
@@ -2271,24 +3391,40 @@ def run_client_valuation_review(evidence_packets):
     }
 
 
-def run_external_benchmark_review(evidence_packets):
+def get_asset_benchmark_terms(transaction_profile):
+    asset_class = normalize_text(transaction_profile.get("asset_class"))
+    benchmark_terms = {
+        "solar_pv": ["utility-scale pv", "solar", "pv", "photovoltaic", "inverter", "module", "solar - utility pv"],
+        "onshore_wind": ["onshore wind", "wind turbine", "wind farm", "turbine", "wake loss"],
+        "offshore_wind": ["offshore wind", "foundation", "export cable", "marine installation", "seabed"],
+        "bess": ["utility-scale battery storage", "bess", "battery storage", "augmentation", "storage"],
+        "hydrogen": ["hydrogen", "electrolyser", "electrolyzer", "lcoh", "ammonia"],
+        "regulated_grid_distribution": ["distribution network", "regulated grid", "grid modernisation", "grid modernization", "network capex"],
+    }
+    return benchmark_terms.get(asset_class, [])
+
+
+def run_external_benchmark_review(evidence_packets, transaction_profile=None, review_config=None):
+    transaction_profile = transaction_profile or {}
+    review_config = review_config or {}
     cost_results = evidence_packets.get("external_cost_benchmark", {}).get("selected_results", [])
     ev_results = evidence_packets.get("external_ev_ebitda_benchmark", {}).get("selected_results", [])
 
     cost_blob = get_evidence_blob(cost_results)
     ev_blob = get_evidence_blob(ev_results)
+    asset_class = clean_text(transaction_profile.get("asset_class")) or "not_identified"
+    asset_terms = review_config.get("benchmark_term_library") or get_asset_benchmark_terms(transaction_profile)
+    generic_cost_terms = [
+        "overnight capital cost",
+        "grid connection cost",
+        "fixed operating expenses",
+        "variable operating expense",
+        "capex benchmark",
+        "cost benchmark",
+    ]
 
-    cost_benchmark_available = has_any(
-        cost_blob,
-        [
-            "utility-scale battery storage",
-            "utility-scale pv",
-            "pv-plus-battery",
-            "overnight capital cost",
-            "grid connection cost",
-            "fixed operating expenses",
-        ],
-    )
+    asset_benchmark_available = bool(asset_terms) and has_any(cost_blob, asset_terms)
+    cost_benchmark_available = asset_benchmark_available and has_any(cost_blob, generic_cost_terms)
 
     ev_ebitda_benchmark_available = has_all(ev_blob, ["ev", "ebitda"]) and has_any(
         ev_blob,
@@ -2302,20 +3438,24 @@ def run_external_benchmark_review(evidence_packets):
             {
                 "benchmark_area": "External cost benchmark",
                 "traffic_light": STATUS_GREEN,
-                "finding": "External cost benchmark categories are available for PV / BESS / PV-plus-battery.",
+                "finding": f"External cost benchmark categories are available for asset class: {asset_class}.",
                 "allowed_use": "Use for cost, grid and O&M benchmarking only.",
                 "source_chunks": find_source_chunks(
                     cost_results,
-                    ["utility-scale battery storage", "utility-scale pv", "pv-plus-battery", "overnight capital cost", "grid connection cost"],
+                    asset_terms + generic_cost_terms,
                 ),
             }
         )
     else:
+        finding = "External cost benchmark evidence was not found."
+        if asset_terms and has_any(cost_blob, generic_cost_terms) and not asset_benchmark_available:
+            finding = f"Cost benchmark evidence was found, but not for inferred asset class: {asset_class}."
+
         findings.append(
             {
                 "benchmark_area": "External cost benchmark",
                 "traffic_light": STATUS_GREY,
-                "finding": "External cost benchmark evidence was not found.",
+                "finding": finding,
                 "allowed_use": "Do not make external cost benchmark claims.",
                 "source_chunks": [],
             }
@@ -2349,7 +3489,9 @@ def run_external_benchmark_review(evidence_packets):
     return {
         "module": "External Benchmark Review",
         "traffic_light": module_status,
-        "summary": "External benchmark review allows cost benchmarking but blocks unsupported EV/EBITDA benchmark claims.",
+        "summary": "External benchmark review only allows cost benchmarking where corpus evidence matches the inferred asset class.",
+        "asset_class": asset_class,
+        "asset_benchmark_terms": asset_terms,
         "cost_benchmark_available": cost_benchmark_available,
         "ev_ebitda_benchmark_available": ev_ebitda_benchmark_available,
         "findings": findings,
@@ -2360,54 +3502,124 @@ def run_external_benchmark_review(evidence_packets):
 # Conditions and grey modules
 # ---------------------------------------------------------------------
 
-def build_open_items_register(evidence_packets):
+def priority_from_traffic_light(traffic_light):
+    if traffic_light == STATUS_RED:
+        return "High"
+    if traffic_light == STATUS_AMBER:
+        return "Medium-high"
+    return "Medium"
+
+
+def append_open_item(rows, seen, category, condition, traffic_light, evidence_text="", source_chunks=None, recommended_action=None):
+    key = (category, condition)
+    if key in seen:
+        return
+    seen.add(key)
+    rows.append(
+        {
+            "category": category,
+            "condition": condition,
+            "priority": priority_from_traffic_light(traffic_light),
+            "status": "Open / requires closure",
+            "traffic_light": traffic_light,
+            "evidence_text": clean_text(evidence_text)[:700],
+            "source_chunks": source_chunks or [],
+            "recommended_action": recommended_action or "Track to closure before final approval.",
+        }
+    )
+
+
+def build_open_items_register(
+    evidence_packets,
+    completeness_readiness=None,
+    risk_review=None,
+    sensitivity_review=None,
+):
     evidence_results = evidence_packets.get("conditions_open_items", {}).get("selected_results", [])
-    blob = get_evidence_blob(evidence_results)
-
-    open_item_definitions = [
-        {"category": "Financial", "condition": "Reconcile financial metrics across deck, memo and workbook.", "terms": ["metric reconciliation", "reconcile financial metrics", "metrics differ", "reconciliation"], "priority": "High"},
-        {"category": "Market/offtake", "condition": "Obtain independent merchant-price curve support.", "terms": ["merchant-price", "merchant price", "merchant curve", "not appended"], "priority": "High"},
-        {"category": "Market/offtake", "condition": "Obtain offtaker-credit evidence and executed payment-security package.", "terms": ["offtaker credit", "payment security", "letter of credit", "under negotiation", "under discussion"], "priority": "High"},
-        {"category": "Sensitivity", "condition": "Run / present combined downside and explicit BESS augmentation sensitivity.", "terms": ["combined downside", "bess augmentation", "battery augmentation", "sensitivity"], "priority": "High"},
-        {"category": "Cost control", "condition": "Cap grid, overhead and advisory costs; review overlapping scopes.", "terms": ["grid", "overhead", "advisory", "cap", "overlapping"], "priority": "Medium-high"},
-        {"category": "Legal/permitting", "condition": "Close land easements and permit updates.", "terms": ["land", "easement", "permit", "permitting"], "priority": "Medium-high"},
-        {"category": "Cyber", "condition": "Complete cybersecurity / EMS / SCADA assessment.", "terms": ["cyber", "cybersecurity", "ems", "scada"], "priority": "Medium-high"},
-        {"category": "Decommissioning", "condition": "Establish decommissioning / battery-disposal reserve or funding plan.", "terms": ["decommissioning", "battery-disposal", "battery disposal"], "priority": "Medium-high"},
-    ]
-
     rows = []
+    seen = set()
+    completeness_readiness = completeness_readiness or {}
+    risk_review = risk_review or {}
+    sensitivity_review = sensitivity_review or {}
 
-    for item in open_item_definitions:
-        found = has_any(blob, item["terms"])
-
-        if found:
-            traffic_light = STATUS_AMBER
-            status = "Open / requires closure"
-            evidence_text = short_evidence_text(evidence_results, item["terms"], max_chars=700)
-            source_chunks = find_source_chunks(evidence_results, item["terms"], max_sources=5)
-        else:
-            traffic_light = STATUS_GREY
-            status = "Not evidenced"
-            evidence_text = ""
-            source_chunks = []
-
-        rows.append(
-            {
-                "category": item["category"],
-                "condition": item["condition"],
-                "priority": item["priority"],
-                "status": status,
-                "traffic_light": traffic_light,
-                "evidence_text": evidence_text,
-                "source_chunks": source_chunks,
-                "recommended_action": "Track to closure before final approval." if found else "Confirm whether this condition is applicable.",
-            }
+    for item in completeness_readiness.get("checklist", []):
+        if item.get("traffic_light") not in [STATUS_RED, STATUS_AMBER]:
+            continue
+        append_open_item(
+            rows=rows,
+            seen=seen,
+            category="Submission readiness",
+            condition=f"Resolve checklist item: {item.get('required_item')}",
+            traffic_light=item.get("traffic_light"),
+            evidence_text=item.get("evidence_text"),
+            source_chunks=item.get("source_chunks"),
+            recommended_action=item.get("recommended_action"),
         )
+
+    for item in risk_review.get("risk_register", []):
+        if item.get("traffic_light") not in [STATUS_RED, STATUS_AMBER]:
+            continue
+        append_open_item(
+            rows=rows,
+            seen=seen,
+            category="Risk",
+            condition=f"Close risk gap: {item.get('risk')}",
+            traffic_light=item.get("traffic_light"),
+            evidence_text=item.get("mitigation_status"),
+            source_chunks=item.get("source_chunks"),
+            recommended_action=item.get("reviewer_challenge"),
+        )
+
+    for failure in sensitivity_review.get("validation_failures", []):
+        append_open_item(
+            rows=rows,
+            seen=seen,
+            category="Sensitivity",
+            condition=f"Address sensitivity gap: {failure}",
+            traffic_light=STATUS_RED,
+            evidence_text="",
+            source_chunks=sensitivity_review.get("source_chunks", [])[:3],
+            recommended_action="Provide profile-relevant sensitivity evidence or confirm why the scenario is not applicable.",
+        )
+
+    weak_terms = [
+        "not appended",
+        "not included",
+        "under negotiation",
+        "under discussion",
+        "not executed",
+        "not assessed",
+        "pending",
+        "remain open",
+        "not approved",
+        "not quantified",
+    ]
+    for result in evidence_results:
+        chunk_text = clean_text(result.get("chunk_text"))
+        matched_terms = [term for term in weak_terms if normalize_text(term) in normalize_text(chunk_text)]
+        if not matched_terms:
+            continue
+        append_open_item(
+            rows=rows,
+            seen=seen,
+            category="Explicit weak evidence",
+            condition=f"Resolve weak evidence language: {', '.join(matched_terms[:3])}",
+            traffic_light=STATUS_AMBER,
+            evidence_text=chunk_text,
+            source_chunks=[get_source_reference(result)],
+            recommended_action="Confirm status and attach final supporting evidence where applicable.",
+        )
+
+    module_status = STATUS_GREY
+    if any(row["traffic_light"] == STATUS_RED for row in rows):
+        module_status = STATUS_RED
+    elif any(row["traffic_light"] == STATUS_AMBER for row in rows):
+        module_status = STATUS_AMBER
 
     return {
         "module": "Conditions Precedent and Open Items",
-        "traffic_light": STATUS_AMBER,
-        "summary": "Open items are categorized into approval-readiness conditions for reviewer follow-up.",
+        "traffic_light": module_status,
+        "summary": "Open items are generated from readiness gaps, risk gaps, sensitivity validation failures and explicit weak evidence language.",
         "open_items": rows,
     }
 
@@ -2756,26 +3968,60 @@ def build_terms_and_definitions():
     return [{"term": term, "definition": definition} for term, definition in terms]
 
 
-def build_report_quality_status(report):
+def build_quality_status(report, review_config, transaction_profile):
     issues = []
+
+    required_profile_fields = ["asset_class", "geography", "project_stage", "revenue_model"]
+    for field_name in required_profile_fields:
+        value = clean_text(transaction_profile.get(field_name))
+        if not value or value == "not_identified":
+            issues.append(f"Transaction profile field not identified: {field_name}")
+
     sensitivity_review = report.get("sensitivity_review", {})
     if sensitivity_review.get("validation_failures"):
         issues.extend(sensitivity_review.get("validation_failures", []))
+
     financial = report.get("financial_reconciliation", {})
+    reconciliation_table = financial.get("reconciliation_table", [])
+    if not reconciliation_table:
+        issues.append("Financial reconciliation produced no extracted metric rows.")
+
     for row in financial.get("reconciliation_table", []):
-        metric_key = row.get("metric_key")
         values_by_source = row.get("values_by_source", {})
-        if metric_key == "total_project_cost_usd_mn":
-            workbook_values = values_by_source.get("workbook", [])
-            unexpected = [value for value in workbook_values if value not in [289, 289.0]]
-            if unexpected:
-                issues.append(f"Unexpected workbook total project cost values: {unexpected}")
-        if metric_key == "minimum_dscr_x":
-            workbook_values = values_by_source.get("workbook", [])
-            unexpected = [value for value in workbook_values if abs(float(value) - 1.32) > 0.001]
-            if unexpected:
-                issues.append(f"Unexpected workbook minimum DSCR values: {unexpected}")
-    return {"schema_ready": True, "content_ready": len(issues) == 0, "quality_issues": issues}
+        extracted_values = []
+        for source_values in values_by_source.values():
+            extracted_values.extend(source_values)
+
+        if not extracted_values:
+            issues.append(f"Financial metric has no extracted values: {row.get('metric_key')}")
+
+        if row.get("traffic_light") == STATUS_RED or normalize_text(row.get("issue")).find("inconsistent") >= 0:
+            issues.append(f"Financial metric conflict requires reconciliation: {row.get('metric_key')}")
+
+    if not report.get("evidence_appendix"):
+        issues.append("Evidence appendix is empty; source traceability is not available.")
+
+    risk_ids = [
+        row.get("risk_id")
+        for row in report.get("risk_review", {}).get("risk_register", [])
+    ]
+    if "R08_LEGAL_TRANSACTION" not in risk_ids:
+        issues.append("Legal transaction risk was not included in the risk register.")
+
+    content_ready = len(issues) == 0
+    return {
+        "schema_ready": True,
+        "content_ready": content_ready,
+        "quality_issues": issues,
+    }
+
+
+def build_report_quality_status(report):
+    return build_quality_status(
+        report=report,
+        review_config=report.get("review_config", {}),
+        transaction_profile=report.get("transaction_profile", {}),
+    )
 
 
 # ---------------------------------------------------------------------
@@ -3094,6 +4340,8 @@ def save_report_outputs(config_pack, report, markdown_report):
 
     json_path = draft_report_dir / f"{run_id}.json"
     markdown_path = draft_report_dir / f"{run_id}.md"
+    output_files = {"json_path": str(json_path), "markdown_path": str(markdown_path)}
+    report["output_files"] = output_files
 
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
@@ -3101,7 +4349,7 @@ def save_report_outputs(config_pack, report, markdown_report):
     with open(markdown_path, "w", encoding="utf-8") as f:
         f.write(markdown_report)
 
-    return {"json_path": str(json_path), "markdown_path": str(markdown_path)}
+    return output_files
 
 
 # ---------------------------------------------------------------------
@@ -3117,25 +4365,38 @@ def generate_investment_ic_review_report(
     config_base = config_pack["config_base"]
 
     run_id = make_run_id(transaction_id)
-    review_config = load_review_config()
 
-    evidence_packets = run_retrieval_plan(transaction_id=transaction_id)
+    profile_packet = run_neutral_profile_retrieval(transaction_id)
+    transaction_profile = infer_transaction_profile(
+        transaction_id=transaction_id,
+        profile_results=profile_packet.get("selected_results", []),
+    )
+    review_config = load_review_config(transaction_profile)
 
-    transaction_profile = identify_transaction_profile(transaction_id, evidence_packets)
+    evidence_packets = run_retrieval_plan(
+        transaction_profile=transaction_profile,
+        review_config=review_config,
+        profile_packet=profile_packet,
+    )
 
     completeness_readiness = run_completeness_check(review_config, evidence_packets)
     strategy_fit_assessment = run_strategy_fit_assessment(review_config, evidence_packets)
     historical_ic_question_coverage = run_historical_ic_question_check(review_config, evidence_packets)
-    financial_reconciliation = run_financial_reconciliation(evidence_packets)
-    market_offtake_revenue_review = run_market_offtake_revenue_review(evidence_packets)
-    sensitivity_review = run_sensitivity_review(evidence_packets)
+    financial_reconciliation = run_financial_reconciliation(evidence_packets, transaction_profile)
+    market_offtake_revenue_review = run_revenue_model_review(evidence_packets, transaction_profile)
+    sensitivity_review = run_sensitivity_review(evidence_packets, review_config, transaction_profile)
     risk_review = run_risk_review(review_config, evidence_packets)
     valuation_review = run_client_valuation_review(evidence_packets)
-    external_benchmark_review = run_external_benchmark_review(evidence_packets)
+    external_benchmark_review = run_external_benchmark_review(evidence_packets, transaction_profile, review_config)
     previous_request_accommodation = run_previous_request_accommodation_check(evidence_packets)
     prior_deal_comparison = run_prior_deal_comparison(evidence_packets)
     macro_context_review = run_macro_context_review(evidence_packets)
-    conditions_precedent_open_items = build_open_items_register(evidence_packets)
+    conditions_precedent_open_items = build_open_items_register(
+        evidence_packets=evidence_packets,
+        completeness_readiness=completeness_readiness,
+        risk_review=risk_review,
+        sensitivity_review=sensitivity_review,
+    )
 
     report_sections_for_dashboard = {
         "completeness_readiness": completeness_readiness,
@@ -3186,6 +4447,7 @@ def generate_investment_ic_review_report(
         "report_generation_version": REPORT_GENERATION_VERSION,
         "generated_at": audit_metadata["generated_at"],
         "transaction_profile": transaction_profile,
+        "review_config": review_config,
         "executive_summary": executive_summary,
         "traffic_light_dashboard": traffic_light_dashboard,
         "completeness_readiness": completeness_readiness,
@@ -3205,8 +4467,6 @@ def generate_investment_ic_review_report(
         "audit_metadata": audit_metadata,
         "terms_and_definitions": terms_and_definitions,
     }
-
-    report["report_quality_status"] = build_report_quality_status(report)
 
     if use_llm_summary:
         llm_summary = generate_llm_executive_summary(
@@ -3233,24 +4493,27 @@ def generate_investment_ic_review_report(
         llm_summary = {"status": "not_requested", "summary_text": ""}
 
     report["llm_executive_summary"] = llm_summary
-
-    markdown_report = format_markdown_report(report)
-    saved_outputs = save_report_outputs(config_pack, report, markdown_report)
+    report["report_quality_status"] = build_quality_status(
+        report=report,
+        review_config=review_config,
+        transaction_profile=transaction_profile,
+    )
 
     audit_write_result = {"status": "not_requested"}
     if write_audit:
         audit_write_result = write_audit_log(config_base, report)
 
-    report["output_files"] = saved_outputs
     report["audit_write_result"] = audit_write_result
 
     markdown_report = format_markdown_report(report)
     saved_outputs = save_report_outputs(config_pack, report, markdown_report)
-    report["output_files"] = saved_outputs
+    report_status = "ok"
+    if not report.get("report_quality_status", {}).get("content_ready"):
+        report_status = "validation_failed"
 
     return {
         "message": "AI first-line IC review report generated.",
-        "status": "ok",
+        "status": report_status,
         "run_id": run_id,
         "transaction_id": transaction_id,
         "overall_readiness_status": executive_summary.get("overall_readiness_status"),
