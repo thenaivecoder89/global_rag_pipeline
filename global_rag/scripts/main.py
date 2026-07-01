@@ -8,6 +8,7 @@ import global_rag.scripts.report_generation as rg
 import global_rag.scripts.wb_scraper as wb
 import global_rag.scripts.country_macro_llm_call as cmllm
 import global_rag.scripts.country_arima_llm_call as arimallm
+from global_rag.scripts import investment_chatbot as chatbot
 
 from typing import Optional
 from fastapi import FastAPI
@@ -244,6 +245,36 @@ def country_arima_llm_call_api(
             {
                 "status": "ok",
                 "output": country_arima_llm_output
+            }
+        )
+    )
+
+    return api_response
+
+@app.get(path="/investment_chatbot", status_code=200)
+def investment_chatbot_api(
+    q: str,
+    client_data_pack: Optional[str] = None,
+    top_k: int = 8,
+    workstream: Optional[str] = None,
+    corpus_pack_filter: Optional[str] = None,
+    max_output_tokens: int = 1200
+):
+    chatbot_output = chatbot.answer_question(
+        question=q,
+        client_data_pack=client_data_pack,
+        chat_history=None,
+        top_k=top_k,
+        workstream=workstream,
+        corpus_pack_filter=corpus_pack_filter,
+        max_output_tokens=max_output_tokens
+    )
+
+    api_response = JSONResponse(
+        content=jsonable_encoder(
+            {
+                "status": "ok",
+                "output": chatbot_output
             }
         )
     )
