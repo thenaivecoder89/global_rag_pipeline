@@ -210,7 +210,7 @@ def retrieve_relevant_chunks(
             AND LENGTH(TRIM(c.chunk_text)) > 0
 
             -- Prevent non-RAG / excluded documents from entering chatbot context
-            AND LOWER(COALESCE(d.index_in_rag, 'yes')) IN ('yes', 'true', '1')
+            AND COALESCE(d.index_in_rag, TRUE) = TRUE
 
             -- Prevent cross-client leakage
             AND {client_scope_filter}
