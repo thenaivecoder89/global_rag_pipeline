@@ -150,18 +150,11 @@ def retrieve_relevant_chunks(
     2. The selected client data pack only
 
     This prevents accidental leakage across client packs.
-    Example client_data_pack:
-        TXN_HELIOS_001
-        TXN_ADDC_001
     """
 
     query_embedding = _get_query_embedding(question)
     query_vector = _to_pgvector_literal(query_embedding)
 
-    # If client_data_pack is supplied:
-    #   allow global corpus + that client pack.
-    # If not supplied:
-    #   allow only global corpus.
     if client_data_pack:
         client_scope_filter = """
             (
@@ -173,6 +166,18 @@ def retrieve_relevant_chunks(
     else:
         client_scope_filter = """
             c.corpus_zone = 'corpus_data'
+        """
+
+    optional_filters = ""
+
+    if workstream:
+        optional_filters += """
+            AND c.workstream = :workstream
+        """
+
+    if corpus_pack_filter:
+        optional_filters += """
+            AND c.corpus_pack = :corpus_pack_filter
         """
 
     sql = text(f"""
@@ -209,15 +214,13 @@ def retrieve_relevant_chunks(
             AND c.chunk_text IS NOT NULL
             AND LENGTH(TRIM(c.chunk_text)) > 0
 
-            -- Prevent non-RAG / excluded documents from entering chatbot context
+            -- index_in_rag is BOOLEAN in your DB
             AND COALESCE(d.index_in_rag, TRUE) = TRUE
 
             -- Prevent cross-client leakage
             AND {client_scope_filter}
 
-            -- Optional filters for later API use
-            AND (:workstream IS NULL OR c.workstream = :workstream)
-            AND (:corpus_pack_filter IS NULL OR c.corpus_pack = :corpus_pack_filter)
+            {optional_filters}
 
         ORDER BY c.embedding <=> CAST(:query_vector AS vector)
         LIMIT :top_k
@@ -227,9 +230,13 @@ def retrieve_relevant_chunks(
         "query_vector": query_vector,
         "client_data_pack": client_data_pack,
         "top_k": top_k,
-        "workstream": workstream,
-        "corpus_pack_filter": corpus_pack_filter,
     }
+
+    if workstream:
+        params["workstream"] = workstream
+
+    if corpus_pack_filter:
+        params["corpus_pack_filter"] = corpus_pack_filter
 
     with engine.connect() as conn:
         rows = conn.execute(sql, params).mappings().all()
