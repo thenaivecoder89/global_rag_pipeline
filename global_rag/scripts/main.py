@@ -260,23 +260,38 @@ def investment_chatbot_api(
     corpus_pack_filter: Optional[str] = None,
     max_output_tokens: int = 1200
 ):
-    chatbot_output = chatbot.answer_question(
-        question=q,
-        client_data_pack=client_data_pack,
-        chat_history=None,
-        top_k=top_k,
-        workstream=workstream,
-        corpus_pack_filter=corpus_pack_filter,
-        max_output_tokens=max_output_tokens
-    )
-
-    api_response = JSONResponse(
-        content=jsonable_encoder(
-            {
-                "status": "ok",
-                "output": chatbot_output
-            }
+    try:
+        chatbot_output = chatbot.answer_question(
+            question=q,
+            client_data_pack=client_data_pack,
+            chat_history=None,
+            top_k=top_k,
+            workstream=workstream,
+            corpus_pack_filter=corpus_pack_filter,
+            max_output_tokens=max_output_tokens
         )
-    )
 
-    return api_response
+        api_response = JSONResponse(
+            content=jsonable_encoder(
+                {
+                    "status": "ok",
+                    "output": chatbot_output
+                }
+            )
+        )
+
+        return api_response
+
+    except Exception as e:
+        api_response = JSONResponse(
+            status_code=500,
+            content=jsonable_encoder(
+                {
+                    "status": "error",
+                    "message": "investment_chatbot failed",
+                    "error": str(e)
+                }
+            )
+        )
+
+        return api_response
