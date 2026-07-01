@@ -7,6 +7,7 @@ import global_rag.scripts.retrieve_chunks as ret
 import global_rag.scripts.report_generation as rg
 import global_rag.scripts.wb_scraper as wb
 import global_rag.scripts.country_macro_llm_call as cmllm
+import global_rag.scripts.country_arima_llm_call as arimallm
 
 from typing import Optional
 from fastapi import FastAPI
@@ -203,6 +204,46 @@ def country_macro_llm_call_api(
             {
                 "status": "ok",
                 "output": country_macro_llm_output
+            }
+        )
+    )
+
+    return api_response
+
+@app.get(path="/country_arima_llm_call", status_code=200)
+def country_arima_llm_call_api(
+    forecast_years: int = 3,
+    schema: str = "public",
+    country_codes: Optional[str] = None,
+    focus_country: str = "ARE",
+    include_graphs_in_llm: bool = True,
+    max_graphs_to_send: int = 27,
+    max_output_tokens: int = 16000
+):
+    parsed_country_codes = None
+
+    if country_codes:
+        parsed_country_codes = [
+            country_code.strip().upper()
+            for country_code in country_codes.split(",")
+            if country_code.strip()
+        ]
+
+    country_arima_llm_output = arimallm.llm_call(
+        forecast_years=forecast_years,
+        schema=schema,
+        country_codes=parsed_country_codes,
+        focus_country=focus_country,
+        include_graphs_in_llm=include_graphs_in_llm,
+        max_graphs_to_send=max_graphs_to_send,
+        max_output_tokens=max_output_tokens
+    )
+
+    api_response = JSONResponse(
+        content=jsonable_encoder(
+            {
+                "status": "ok",
+                "output": country_arima_llm_output
             }
         )
     )
